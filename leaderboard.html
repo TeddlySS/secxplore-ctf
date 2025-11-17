@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scoreboard - secXplore</title>
+    <link rel="stylesheet" href="leaderboard.css">
+</head>
+<body>
+    <!-- Cyber Grid Background -->
+    <div class="cyber-grid"></div>
+    
+    <!-- Floating Particles -->
+    <div class="particles" id="particles"></div>
+
+    <!-- Navigation -->
+    <nav>
+        <div class="nav-container">
+            <div class="logo">
+                <span>logo</span>
+                <span>secXplore</span>
+            </div>
+            <div class="nav-links">
+                <a href="home.html" class="nav-link">Home</a>
+                <a href="main.html" class="nav-link">Challenges</a>
+                <a href="leaderboard.html" class="nav-link">Scoreboard</a>
+
+                <div class="nav-user-area">
+                    <!-- โหมด guest -->
+                    <a href="login.html" class="nav-link sign-in-btn" id="navSignInBtn">
+                        Sign In
+                    </a>
+
+                    <!-- โหมดที่ล็อกอินแล้ว -->
+                    <a href="profile.html" class="nav-link profile-pill" id="navProfileBtn" style="display:none">
+                        <img src="" alt="avatar" class="nav-avatar" id="navAvatar">
+                        <span id="navUsername">@user</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <!-- Leaderboard Header -->
+        <div class="leaderboard-header">
+            <h1 class="page-title">🏆 Scoreboard</h1>
+            <p class="subtitle">Ranked by points</p>
+        </div>
+
+        <!-- Podium Section -->
+        <div class="podium-container">
+            <div class="podium-item second-place">
+                <div class="podium-avatar">
+                    <div class="avatar-circle">SP</div>
+                    <div class="crown silver">🥈</div>
+                </div>
+                <div class="podium-info">
+                    <h3>SecurityPro</h3>
+                    <p class="level">22/24 Solved</p>
+                    <p class="xp">4,850 Points</p>
+                </div>
+                <div class="podium-base second">
+                    <div class="rank-number">2</div>
+                </div>
+            </div>
+
+            <div class="podium-item first-place">
+                <div class="podium-avatar">
+                    <div class="avatar-circle">CN</div>
+                    <div class="crown gold">👑</div>
+                </div>
+                <div class="podium-info">
+                    <h3>CyberNinja</h3>
+                    <p class="level">24/24 Solved</p>
+                    <p class="xp">5,420 Points</p>
+                </div>
+                <div class="podium-base first">
+                    <div class="rank-number">1</div>
+                </div>
+            </div>
+
+            <div class="podium-item third-place">
+                <div class="podium-avatar">
+                    <div class="avatar-circle">HD</div>
+                    <div class="crown bronze">🥉</div>
+                </div>
+                <div class="podium-info">
+                    <h3>HackDefender</h3>
+                    <p class="level">20/24 Solved</p>
+                    <p class="xp">4,200 Points</p>
+                </div>
+                <div class="podium-base third">
+                    <div class="rank-number">3</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Full Leaderboard -->
+        <div class="leaderboard-container">
+            <!-- Current Rank Widget (Top Right Corner) -->
+            <div class="current-rank-widget">
+                <div class="rank-widget-header">Current Rank</div>
+                <div class="rank-widget-number">42</div>
+            </div>
+
+            <div class="leaderboard-controls">
+                <div class="filter-buttons">
+                    <button class="filter-btn active">All Time</button>
+                    <button class="filter-btn">This Week</button>
+                    <button class="filter-btn">This Month</button>
+                </div>
+            </div>
+
+            <div class="leaderboard-list" id="leaderboardList">
+                <!-- Will be populated by JavaScript -->
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="leaderboard.js"></script>
+</body>
+</html>
