@@ -5031,4 +5031,17 @@ Position 32: } = }
 ✓ Layers: Base64 → Alternating Caesar(-13/-11)
 </span>`;
 }
+  // === Expose functions for HTML onclick ===
+// ให้เรียกได้จาก onclick="..." ใน main.html / home.html
+
+window.openChallengeList = openChallengeList;
+window.openInteractiveChallenge = openInteractiveChallenge;
+window.closeModal = closeModal;
+window.confirmBackToCategory = confirmBackToCategory;
+
+// ฟังก์ชันที่ถูกเรียกจาก interactive content
+window.toggleHint = toggleHint;
+window.attemptSQLLogin = attemptSQLLogin;
+
+});
 });
