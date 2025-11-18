@@ -1,10 +1,7 @@
 // register.js
 import { supabase } from './supabaseClient.js';
 import { setupNavUser } from './navAuth.js';
-
-// ------------------------
-// 1) พื้นหลังอนุภาค
-// ------------------------
+// ---------- UI: particles ----------
 function createParticles() {
   const particlesContainer = document.getElementById('particles');
   if (!particlesContainer) return;
@@ -19,241 +16,92 @@ function createParticles() {
   }
 }
 
-// ------------------------
-// 2) Toggle password (ใช้กับ onclick ใน HTML)
-// ------------------------
+// ---------- UI: toggle password ----------
 function togglePasswordVisibility(inputId, buttonId) {
   const input = document.getElementById(inputId);
   const button = document.getElementById(buttonId);
+
   if (!input || !button) return;
 
-  const eyeClosed = button.querySelector('.eye-closed');
-  const eyeOpen = button.querySelector('.eye-open');
-
-  if (input.type === 'password') {
-    input.type = 'text';
-    if (eyeClosed) eyeClosed.style.display = 'none';
-    if (eyeOpen) eyeOpen.style.display = 'block';
-  } else {
-    input.type = 'password';
-    if (eyeClosed) eyeClosed.style.display = 'block';
-    if (eyeOpen) eyeOpen.style.display = 'none';
-  }
+  button.addEventListener('click', () => {
+    const type = input.type === 'password' ? 'text' : 'password';
+    input.type = type;
+    button.classList.toggle('visible', type === 'text');
+  });
 }
 
-// ทำให้ HTML เรียกได้: onclick="togglePasswordVisibility(...)"
-window.togglePasswordVisibility = togglePasswordVisibility;
-
-// ------------------------
-// 3) Password strength + match (ใช้ id: strengthBar / strengthText)
-// ------------------------
+// ---------- UI: password strength & match ----------
 function checkPasswordStrength(password) {
-  const strengthBar = document.getElementById('strengthBar');
-  const strengthText = document.getElementById('strengthText');
+  const strengthBar = document.getElementById('passwordStrengthBar');
+  const strengthText = document.getElementById('passwordStrengthText');
+  if (!strengthBar || !strengthText) return;
 
-  if (!strengthBar || !strengthText) return 0;
+  let score = 0;
+  if (password.length >= 8) score++;
+  if (/[A-Z]/.test(password)) score++;
+  if (/[0-9]/.test(password)) score++;
+  if (/[^A-Za-z0-9]/.test(password)) score++;
 
-  let strength = 0;
-  const feedback = [];
+  strengthBar.style.width = (score * 25) + '%';
 
-  if (password.length >= 8) strength++;
-  else feedback.push('at least 8 characters');
-
-  if (/[A-Z]/.test(password)) strength++;
-  else feedback.push('uppercase letter');
-
-  if (/[a-z]/.test(password)) strength++;
-  else feedback.push('lowercase letter');
-
-  if (/[0-9]/.test(password)) strength++;
-  else feedback.push('number');
-
-  if (/[^A-Za-z0-9]/.test(password)) strength++;
-  else feedback.push('special character');
-
-  strengthBar.className = 'strength-bar';
-  if (strength <= 2) {
-    strengthBar.classList.add('strength-weak');
-    strengthText.textContent = `Need: ${feedback.join(', ')}`;
-    strengthText.style.color = 'var(--danger)';
-  } else if (strength <= 4) {
-    strengthBar.classList.add('strength-medium');
-    strengthText.textContent = `Recommended: ${feedback.join(', ')}`;
-    strengthText.style.color = 'var(--warning)';
-  } else {
-    strengthBar.classList.add('strength-strong');
-    strengthText.textContent = 'Strong password';
-    strengthText.style.color = 'var(--success)';
-  }
-
-  return strength;
+  const strengthLevels = ['Very weak', 'Weak', 'Medium', 'Strong', 'Very strong'];
+  strengthText.textContent = strengthLevels[score] || 'Very weak';
 }
 
 function checkPasswordMatch() {
-  const password = document.getElementById('password')?.value || '';
-  const confirmPassword =
-    document.getElementById('confirmPassword')?.value || '';
+  const passwordInput = document.getElementById('password');
+  const confirmInput = document.getElementById('confirmPassword');
   const matchIndicator = document.getElementById('passwordMatch');
 
-  if (!matchIndicator) return false;
+  if (!passwordInput || !confirmInput || !matchIndicator) return;
 
-  if (confirmPassword === '') {
+  if (!confirmInput.value) {
     matchIndicator.textContent = '';
     matchIndicator.className = 'password-match';
-    return false;
+    return;
   }
 
-  if (password === confirmPassword) {
-    matchIndicator.textContent = 'Passwords match ✓';
-    matchIndicator.className = 'password-match match-success';
-    return true;
+  if (passwordInput.value === confirmInput.value) {
+    matchIndicator.textContent = 'Password matched';
+    matchIndicator.className = 'password-match success';
   } else {
-    matchIndicator.textContent = 'Passwords do not match ✗';
-    matchIndicator.className = 'password-match match-error';
-    return false;
+    matchIndicator.textContent = 'Password does not match';
+    matchIndicator.className = 'password-match error';
   }
 }
 
-// ------------------------
-// 4) Validate form (เปิด/ปิดปุ่ม Create Account)
-// ------------------------
 function validateForm() {
-  const username = document.getElementById('username')?.value || '';
-  const email = document.getElementById('email')?.value || '';
-  const password = document.getElementById('password')?.value || '';
-  const confirmPassword =
-    document.getElementById('confirmPassword')?.value || '';
-  const termsAccepted = document.getElementById('terms')?.checked;
+  const form = document.getElementById('registerForm');
+  const usernameInput = document.getElementById('username');
+  const emailInput = document.getElementById('email');
+  const passwordInput = document.getElementById('password');
+  const confirmPasswordInput = document.getElementById('confirmPassword');
+  const termsCheckbox = document.getElementById('terms');
   const registerBtn = document.getElementById('registerBtn');
 
-  if (!registerBtn) return;
-
-  const isUsernameValid = username.length >= 3 && username.length <= 20;
-  const isEmailValid = email.includes('@') && email.includes('.');
-  const isPasswordStrong = checkPasswordStrength(password) >= 3;
-  const isPasswordMatch =
-    password === confirmPassword && confirmPassword !== '';
-
   if (
-    isUsernameValid &&
-    isEmailValid &&
-    isPasswordStrong &&
-    isPasswordMatch &&
-    termsAccepted
-  ) {
-    registerBtn.disabled = false;
-    registerBtn.style.opacity = '1';
-  } else {
-    registerBtn.disabled = true;
-    registerBtn.style.opacity = '0.6';
-  }
+    !form ||
+    !usernameInput ||
+    !emailInput ||
+    !passwordInput ||
+    !confirmPasswordInput ||
+    !termsCheckbox ||
+    !registerBtn
+  ) return;
+
+  const isValid =
+    usernameInput.value.trim().length >= 3 &&
+    emailInput.validity.valid &&
+    passwordInput.value.trim().length >= 8 &&
+    passwordInput.value === confirmPasswordInput.value &&
+    termsCheckbox.checked;
+
+  registerBtn.disabled = !isValid;
 }
 
-// ------------------------
-// 5) Username availability (fake check เหมือนเดิม)
-// ------------------------
-function checkUsernameAvailability(username) {
-  const unavailableUsernames = [
-    'admin',
-    'root',
-    'user',
-    'test',
-    'cyberguard',
-    'ctf',
-  ];
-
-  if (username.length < 3) {
-    return {
-      available: false,
-      message: 'Username must be at least 3 characters',
-    };
-  }
-
-  if (unavailableUsernames.includes(username.toLowerCase())) {
-    return { available: false, message: 'This username is not available' };
-  }
-
-  return { available: true, message: 'Username is available ✓' };
-}
-
-function setupUsernameValidation() {
-  const usernameInput = document.getElementById('username');
-  if (!usernameInput) return;
-
-  let validationTimeout;
-  usernameInput.addEventListener('input', function () {
-    const username = this.value;
-
-    clearTimeout(validationTimeout);
-
-    const existingMessage =
-      this.parentElement.querySelector('.username-validation');
-    if (existingMessage) existingMessage.remove();
-
-    if (username.length >= 3) {
-      validationTimeout = setTimeout(() => {
-        const validation = checkUsernameAvailability(username);
-        const messageElement = document.createElement('div');
-        messageElement.className = `username-validation ${
-          validation.available ? 'match-success' : 'match-error'
-        }`;
-        messageElement.textContent = validation.message;
-        messageElement.style.fontSize = '0.9rem';
-        messageElement.style.marginTop = '0.5rem';
-        this.parentElement.appendChild(messageElement);
-        validateForm();
-      }, 500);
-    } else {
-      validateForm();
-    }
-  });
-}
-
-// ------------------------
-// 6) เอฟเฟกต์ input + keyboard
-// ------------------------
-function setupInputEffects() {
-  const inputs = document.querySelectorAll('.form-input');
-
-  inputs.forEach((input) => {
-    input.addEventListener('focus', function () {
-      this.parentElement.classList.add('focused');
-    });
-
-    input.addEventListener('blur', function () {
-      if (!this.value) {
-        this.parentElement.classList.remove('focused');
-      }
-    });
-
-    input.addEventListener('input', function () {
-      if (this.value) {
-        this.classList.add('has-value');
-      } else {
-        this.classList.remove('has-value');
-      }
-    });
-  });
-}
-
-function setupKeyboardShortcuts() {
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && e.target.matches('.form-input')) {
-      const registerBtn = document.getElementById('registerBtn');
-      if (registerBtn && !registerBtn.disabled) {
-        const form = document.getElementById('registerForm');
-        if (form) form.dispatchEvent(new Event('submit'));
-      }
-    }
-  });
-}
-
-// ------------------------
-// 7) helper message + validate password logic
-// ------------------------
-function showMessage(message) {
-  // ถ้าอยากทำเป็น toast สวย ๆ ค่อยมาแต่งเพิ่มได้
-  alert(message);
+// ---------- helper ----------
+function showMessage(msg) {
+  alert(msg);
 }
 
 function validatePassword(password, confirmPassword) {
@@ -265,10 +113,53 @@ function validatePassword(password, confirmPassword) {
   }
   return null;
 }
+// ------------------------
+// ตรวจสอบว่า email / username ซ้ำในตาราง users หรือไม่
+// ------------------------
+async function checkDuplicateEmailUsername(email, username) {
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('email, username')
+      .or(`email.eq.${email},username.eq.${username}`)
+      .limit(1);
 
-// ------------------------
-// 8) สมัครสมาชิกจริงกับ Supabase
-// ------------------------
+    if (error) {
+      console.error('Check duplicate error:', error);
+      return {
+        ok: false,
+        message: 'ไม่สามารถตรวจสอบ email / username ได้ กรุณาลองใหม่อีกครั้ง',
+      };
+    }
+
+    if (!data || data.length === 0) {
+      // ไม่ซ้ำ
+      return { ok: true };
+    }
+
+    const existing = data[0];
+
+    if (existing.email === email && existing.username === username) {
+      return { ok: false, message: 'อีเมลและชื่อผู้ใช้นี้ถูกใช้แล้วในระบบ' };
+    }
+    if (existing.email === email) {
+      return { ok: false, message: 'อีเมลนี้ถูกใช้สมัครไปแล้ว' };
+    }
+    if (existing.username === username) {
+      return { ok: false, message: 'Username นี้ถูกใช้แล้ว เลือกชื่ออื่นนะ' };
+    }
+
+    return { ok: false, message: 'ข้อมูลซ้ำในระบบแล้ว' };
+  } catch (err) {
+    console.error('Unexpected duplicate check error:', err);
+    return {
+      ok: false,
+      message: 'เกิดข้อผิดพลาดในการตรวจสอบข้อมูลซ้ำ กรุณาลองใหม่',
+    };
+  }
+}
+
+// ---------- สมัครสมาชิกด้วย Supabase ----------
 async function handleRegistration(e) {
   e.preventDefault();
 
@@ -299,79 +190,97 @@ async function handleRegistration(e) {
     return;
   }
 
+  // ตรวจสอบความถูกต้องของรหัสผ่าน (เช่น ยาว >= 8 และตรงกัน)
   const pwdError = validatePassword(password, confirmPassword);
   if (pwdError) {
     showMessage(pwdError);
     return;
   }
 
+  // ล็อกปุ่มไม่ให้กดซ้ำระหว่างกำลังสมัคร
   registerBtn.disabled = true;
   const originalText = registerBtn.textContent;
   registerBtn.textContent = 'Creating account...';
 
   try {
-    // 1) สมัครใน Supabase Auth
+    // 1) เช็คในตาราง users ก่อนว่า email / username ซ้ำไหม
+    const dup = await checkDuplicateEmailUsername(email, username);
+    if (!dup.ok) {
+      showMessage(dup.message);
+      return; // ถ้าซ้ำ หยุดเลย ไม่ต้องไป signUp
+    }
+
+    // 2) สมัครใน Supabase Auth (ตอนนี้ไม่บังคับยืนยันอีเมลแล้ว ถ้าไปปิดใน Dashboard)
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: { username }, // เก็บไว้ใน user_metadata
+        data: { username }, // เก็บ username ไว้ใน user_metadata
       },
     });
 
     if (error) {
-      console.error(error);
-      showMessage(error.message || 'สมัครสมาชิกไม่สำเร็จ');
+      console.error('signUp error:', error);
+      if (
+        error.message &&
+        error.message.toLowerCase().includes('user already registered')
+      ) {
+        showMessage('อีเมลนี้มีบัญชีในระบบแล้ว ลองเข้าสู่ระบบแทน');
+      } else {
+        showMessage(error.message || 'สมัครสมาชิกไม่สำเร็จ');
+      }
       return;
     }
 
-    // 2) สร้าง row ใน table users (ถ้า policy อนุญาต)
-    // ถ้า RLS ไม่ให้ insert ตรงนี้ fail แต่อย่างน้อย auth ก็สำเร็จแล้ว
-    try {
-      const { error: insertError } = await supabase.from('users').insert({
-        username,
-        email,
-        display_name: username,
-        xp: 0,
-        role: 'player',
-        status: 'active',
-      });
-      if (insertError) {
-        console.warn('Insert users error (ไม่ critical):', insertError);
-      }
-    } catch (insertErr) {
-      console.warn('users insert exception:', insertErr);
+    // 3) บันทึกข้อมูลผู้เล่นลงตาราง users
+    const { error: insertError } = await supabase.from('users').insert({
+      // ถ้าตาราง users มีคอลัมน์ id ผูกกับ auth.uid()
+      // และตั้ง default อยู่แล้ว ไม่จำเป็นต้องส่ง id ก็ได้
+      username,
+      email,
+      display_name: username,
+      xp: 0,
+      role: 'player',
+      status: 'active',
+    });
+
+    if (insertError) {
+      console.error('Insert users error:', insertError);
+      showMessage(
+        'สมัครสำเร็จบางส่วน แต่บันทึกข้อมูลผู้เล่นไม่สำเร็จ: ' +
+          (insertError.message || '')
+      );
+      // ยัง redirect ไปหน้า login ได้ ถ้าคุณโอเคให้ user ล็อกอินได้อยู่
+      window.location.href = 'login.html';
+      return;
     }
 
+    // 4) ทุกอย่างผ่าน
     showMessage('สมัครสมาชิกสำเร็จ! กรุณาเข้าสู่ระบบ');
     window.location.href = 'login.html';
   } catch (err) {
-    console.error(err);
+    console.error('Registration error:', err);
     showMessage(err.message || 'เกิดข้อผิดพลาดระหว่างสมัครสมาชิก');
   } finally {
+    // คืนสภาพปุ่ม
     registerBtn.disabled = false;
     registerBtn.textContent = originalText;
   }
 }
 
-// ------------------------
-// 9) Google OAuth สำหรับหน้า Register
-// ------------------------
+// ---------- Google OAuth ในหน้า Register ----------
 async function signInWithGoogleFromRegister() {
   try {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        // ถ้าคุณ deploy ที่ secxplore.site แล้วให้ใส่ URL ที่อนุญาตใน Supabase
-        redirectTo: `${window.location.origin}/home.html`,
+        redirectTo: 'https://secxplore.site/challenge.html',
       },
     });
 
     if (error) {
       console.error(error);
-      showMessage(
-        'ไม่สามารถเชื่อมต่อ Google ได้: ' + (error.message || 'unknown error'),
-      );
+      showMessage('ไม่สามารถเชื่อมต่อ Google ได้: ' + (error.message || 'unknown error'));
     }
   } catch (err) {
     console.error(err);
@@ -379,15 +288,19 @@ async function signInWithGoogleFromRegister() {
   }
 }
 
-// ให้เรียกจาก HTML: onclick="handleGoogleSignIn()"
+// ให้เรียกได้จาก onclick="handleGoogleSignIn()"
 window.handleGoogleSignIn = function () {
   signInWithGoogleFromRegister();
 };
 
-// ------------------------
-// 10) Setup ตอนโหลดหน้า
-// ------------------------
-function setupFormEvents() {
+// ---------- Ready ----------
+document.addEventListener('DOMContentLoaded', () => {
+  createParticles();
+
+  // toggle password (ถ้ามีปุ่ม)
+  togglePasswordVisibility('password', 'togglePassword');
+  togglePasswordVisibility('confirmPassword', 'toggleConfirmPassword');
+
   const passwordInput = document.getElementById('password');
   const confirmPasswordInput = document.getElementById('confirmPassword');
   const usernameInput = document.getElementById('username');
@@ -396,15 +309,15 @@ function setupFormEvents() {
   const registerForm = document.getElementById('registerForm');
 
   if (passwordInput) {
-    passwordInput.addEventListener('input', function () {
-      checkPasswordStrength(this.value);
+    passwordInput.addEventListener('input', () => {
+      checkPasswordStrength(passwordInput.value);
       checkPasswordMatch();
       validateForm();
     });
   }
 
   if (confirmPasswordInput) {
-    confirmPasswordInput.addEventListener('input', function () {
+    confirmPasswordInput.addEventListener('input', () => {
       checkPasswordMatch();
       validateForm();
     });
@@ -425,21 +338,11 @@ function setupFormEvents() {
   if (registerForm) {
     registerForm.addEventListener('submit', handleRegistration);
   }
-}
 
-document.addEventListener('DOMContentLoaded', () => {
-  createParticles();
-  setupNavUser();          // ให้ navbar sync กับสถานะ login ปัจจุบัน
-  setupFormEvents();
-  setupUsernameValidation();
-  setupInputEffects();
-  setupKeyboardShortcuts();
-
+  // focus ช่องแรก
   const firstInput = document.querySelector('.form-input');
   if (firstInput) {
-    setTimeout(() => {
-      firstInput.focus();
-    }, 500);
+    setTimeout(() => firstInput.focus(), 500);
   }
 
   validateForm();
