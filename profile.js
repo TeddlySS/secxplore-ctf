@@ -667,10 +667,27 @@ function showToast(message, type = 'success') {
     }, 3000);
 }
 
-function logout() {
-    if (confirm('Are you sure you want to logout?')) {
+async function logout() {
+    const confirmLogout = confirm('Are you sure you want to logout?');
+    if (!confirmLogout) return;
+
+    try {
+        // เคลียร์ session ที่ Supabase ใช้อยู่ (รวม Google / Email ทั้งหมด)
+        const { error } = await supabase.auth.signOut();
+        if (error) {
+            console.error('Supabase signOut error:', error);
+            alert('Logout failed, please try again.');
+            return;
+        }
+
+        // ถ้ายังใช้ currentUser เก็บ state เองอยู่ จะลบก็ได้
         localStorage.removeItem('currentUser');
-        window.location.href = 'login.html';
+
+        // กลับไปหน้า Login
+        window.location.href = 'home.html';
+    } catch (err) {
+        console.error('Unexpected logout error:', err);
+        alert('Logout error, please try again.');
     }
 }
 // Expose functions for inline onclick handlers in profile.html
