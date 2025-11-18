@@ -1166,10 +1166,22 @@ function switchToUserView() {
     }
 }
 
-function logout() {
-    // Optional: Can be used to clear session if needed
-    if (confirm('Reload the page?')) {
-        window.location.reload();
+async function logout() {
+    const confirmLogout = confirm('Are you sure you want to logout?');
+    if (!confirmLogout) return;
+
+    try {
+        const { error } = await supabase.auth.signOut();
+        if (error) {
+            console.error('Supabase signOut error:', error);
+            showToast('Logout failed', 'error');
+            return;
+        }
+
+        window.location.href = 'home.html';
+    } catch (err) {
+        console.error('Unexpected logout error:', err);
+        showToast('Logout error', 'error');
     }
 }
 
