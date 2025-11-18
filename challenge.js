@@ -5031,17 +5031,53 @@ Position 32: } = }
 ✓ Layers: Base64 → Alternating Caesar(-13/-11)
 </span>`;
 }
-  // === Expose functions for HTML onclick ===
-// ให้เรียกได้จาก onclick="..." ใน main.html / home.html
+// === Expose functions for HTML onclick ===
+// ให้เรียกได้จาก onclick="..." ใน challenge.html และ interactive templates
 
+// ปุ่มเลือกหมวด / เปิด–ปิด modal หลัก
 window.openChallengeList = openChallengeList;
 window.openInteractiveChallenge = openInteractiveChallenge;
 window.closeModal = closeModal;
 window.confirmBackToCategory = confirmBackToCategory;
 
-// ฟังก์ชันที่ถูกเรียกจาก interactive content
+// ระบบ Hint + login bypass (SQL Injection)
 window.toggleHint = toggleHint;
 window.attemptSQLLogin = attemptSQLLogin;
+window.checkFlag = checkFlag;
 
-});
+// Command Injection lab
+window.executeCMD = executeCMD;
+
+// XSS lab
+window.submitXSS = submitXSS;
+
+// Crypto tools / XOR / RSA ฯลฯ
+window.applyOperation = applyOperation;
+window.calculateXor = calculateXor;
+window.calculateRsaPrivateKey = calculateRsaPrivateKey;
+window.decryptRsaMessage = decryptRsaMessage;
+window.decryptWithXorKey = decryptWithXorKey;
+window.showPublicKey = showPublicKey;
+window.testPrimeFactor = testPrimeFactor;
+
+// Clipboard / UI helper
+window.copyToClipboard = copyToClipboard;
+
+// Dialog ยืนยัน / multi-step challenge
+window.closeHintConfirmDialog = closeHintConfirmDialog;
+window.confirmHint = confirmHint;
+window.closeConfirmDialog = closeConfirmDialog;
+window.confirmExit = confirmExit;
+
+window.processMultiStep1 = processMultiStep1;
+window.processMultiStep2 = processMultiStep2;
+window.processMultiStep3 = processMultiStep3;
+window.processMultiStep4 = processMultiStep4;
+
+// JWT lab
+window.createHS256 = createHS256;
+window.decodeJWT = decodeJWT;
+window.verifyJWT = verifyJWT;
+
+
 });
