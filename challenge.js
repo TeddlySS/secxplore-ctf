@@ -1,142 +1,157 @@
 import { supabase } from './supabaseClient.js';
 import { setupNavUser } from './navAuth.js';
 
+async function requireChallengeAuth() {
+  const { data, error } = await supabase.auth.getUser();
+
+  if (error || !data.user) {
+    const goLogin = confirm(
+      'คุณยังไม่ได้เข้าสู่ระบบ\nต้องการไปหน้า Login เพื่อเริ่มเล่นโจทย์หรือไม่?'
+    );
+    if (goLogin) {
+      window.location.href = 'login.html';
+    }
+    return null;
+  }
+
+  return data.user; // ถ้า login แล้วจะได้ object user กลับมา
+}
 async function ensureUserRow() {
-  const { data: authData, error: authError } = await supabase.auth.getUser();
-  if (authError || !authData.user) {
-    // ยังไม่ login → ส่งกลับหน้า login ก็ได้ หรือปล่อยเป็น guest
-    // window.location.href = 'login.html';
-    return;
-  }
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    if (authError || !authData.user) {
+        // ยังไม่ login → ส่งกลับหน้า login ก็ได้ หรือปล่อยเป็น guest
+        // window.location.href = 'login.html';
+        return;
+    }
 
-  const authUser = authData.user;
-  const email = authUser.email;
-  const googleId = authUser.id;  // id จาก auth
+    const authUser = authData.user;
+    const email = authUser.email;
+    const googleId = authUser.id;  // id จาก auth
 
-  // ลองหาจาก table users
-  const { data: existing, error: selectError } = await supabase
-    .from('users')
-    .select('user_id')
-    .eq('email', email)
-    .single();
+    // ลองหาจาก table users
+    const { data: existing, error: selectError } = await supabase
+        .from('users')
+        .select('user_id')
+        .eq('email', email)
+        .single();
 
-  if (existing) {
-    // มี row อยู่แล้ว ไม่ต้องทำอะไร
-    return;
-  }
+    if (existing) {
+        // มี row อยู่แล้ว ไม่ต้องทำอะไร
+        return;
+    }
 
-  // ถ้ายังไม่มี → สร้างใหม่
-  const username =
-    authUser.user_metadata?.username ||
-    email.split('@')[0];
+    // ถ้ายังไม่มี → สร้างใหม่
+    const username =
+        authUser.user_metadata?.username ||
+        email.split('@')[0];
 
-  const displayName =
-    authUser.user_metadata?.full_name ||
-    authUser.user_metadata?.name ||
-    username;
+    const displayName =
+        authUser.user_metadata?.full_name ||
+        authUser.user_metadata?.name ||
+        username;
 
-  const { error: insertError } = await supabase.from('users').insert({
-    username,
-    email,
-    display_name: displayName,
-    xp: 0,
-    role: 'player',
-    status: 'active',
-    google_id: googleId,
-    oauth_provider: 'google',
-  });
+    const { error: insertError } = await supabase.from('users').insert({
+        username,
+        email,
+        display_name: displayName,
+        xp: 0,
+        role: 'player',
+        status: 'active',
+        google_id: googleId,
+        oauth_provider: 'google',
+    });
 
-  if (insertError) {
-    console.error('Create user row error:', insertError);
-  }
+    if (insertError) {
+        console.error('Create user row error:', insertError);
+    }
 }
 document.addEventListener('DOMContentLoaded', () => {
     setupNavUser();
     ensureUserRow();
     function createParticles() {
-            const particlesContainer = document.getElementById('particles');
-            for (let i = 0; i < 100; i++) {
-                const particle = document.createElement('div');
-                particle.className = 'particle';
-                particle.style.left = Math.random() * 100 + '%';
-                particle.style.animationDelay = Math.random() * 15 + 's';
-                particle.style.animationDuration = (Math.random() * 10 + 10) + 's';
-                particlesContainer.appendChild(particle);
-            }
+        const particlesContainer = document.getElementById('particles');
+        for (let i = 0; i < 100; i++) {
+            const particle = document.createElement('div');
+            particle.className = 'particle';
+            particle.style.left = Math.random() * 100 + '%';
+            particle.style.animationDelay = Math.random() * 15 + 's';
+            particle.style.animationDuration = (Math.random() * 10 + 10) + 's';
+            particlesContainer.appendChild(particle);
         }
-        // Hint System & Scoring
-        // function toggleHint(hintId) {
-        //     const hint = document.getElementById(hintId);
-        //     hint.style.display = hint.style.display === 'block' ? 'none' : 'block';
-        // }
-        // ============================================
-// HINT SYSTEM WITH CONFIRMATION & POINT DEDUCTION
-// ============================================
+    }
+    // Hint System & Scoring
+    // function toggleHint(hintId) {
+    //     const hint = document.getElementById(hintId);
+    //     hint.style.display = hint.style.display === 'block' ? 'none' : 'block';
+    // }
+    // ============================================
+    // HINT SYSTEM WITH CONFIRMATION & POINT DEDUCTION
+    // ============================================
 
-        const HINT_PENALTY = 10; // คะแนนที่ถูกหักต่อ hint (ยกเว้นข้อแรก)
-        const userProgress = {
-            currentPoints: 0,
-            solvedChallenges: new Set(),
-            hintsUsed: {} // เก็บว่าใช้ hint อะไรไปบ้าง format: {challengeId_hintNumber: true}
-        };
+    const HINT_PENALTY = 10; // คะแนนที่ถูกหักต่อ hint (ยกเว้นข้อแรก)
+    const userProgress = {
+        currentPoints: 0,
+        solvedChallenges: new Set(),
+        hintsUsed: {} // เก็บว่าใช้ hint อะไรไปบ้าง format: {challengeId_hintNumber: true}
+    };
 
-        function toggleHint(hintId) {
-            const hint = document.getElementById(hintId);
-            
-            // ถ้า hint เปิดอยู่แล้ว ให้ปิด
-            if (hint.style.display === 'block') {
-                hint.style.display = 'none';
-                return;
-            }
-            
-            // ตรวจสอบว่าใช้ hint นี้ไปแล้วหรือยัง
-            if (userProgress.hintsUsed[hintId]) {
-                // เคยใช้แล้ว เปิดได้เลยไม่ต้องยืนยัน
-                hint.style.display = 'block';
-                return;
-            }
-            
-            // หา challenge type และ hint number จาก hintId
-            // format: {challengeType}hint{number} เช่น "sqlhint1", "cryptohint2"
-            const matches = hintId.match(/^(.+?)hint(\d+)$/);
-            if (!matches) {
-                hint.style.display = 'block';
-                return;
-            }
-            
-            const challengeType = matches[1];
-            const hintNumber = parseInt(matches[2]);
-            
-            // นับว่าใช้ hint ไปกี่ข้อแล้วสำหรับ challenge นี้
-            const usedHintsCount = Object.keys(userProgress.hintsUsed)
-                .filter(key => key.startsWith(challengeType + 'hint'))
-                .length;
-            
-            // ถ้าเป็น hint ข้อแรก ไม่ต้องหักคะแนน
-            if (usedHintsCount === 0) {
-                showHintConfirmation(hintId, 0, () => {
-                    hint.style.display = 'block';
-                    userProgress.hintsUsed[hintId] = true;
-                    updatePointsDisplay();
-                });
-            } else {
-                // hint ข้อถัดไป หักคะแนน 10
-                showHintConfirmation(hintId, HINT_PENALTY, () => {
-                    hint.style.display = 'block';
-                    userProgress.hintsUsed[hintId] = true;
-                    updatePointsDisplay();
-                });
-            }
+    function toggleHint(hintId) {
+        const hint = document.getElementById(hintId);
+
+        // ถ้า hint เปิดอยู่แล้ว ให้ปิด
+        if (hint.style.display === 'block') {
+            hint.style.display = 'none';
+            return;
         }
 
-        function showHintConfirmation(hintId, pointDeduction, onConfirm) {
-            const confirmDialog = document.createElement('div');
-            confirmDialog.className = 'confirm-overlay';
-            
-            const hintNumber = hintId.match(/hint(\d+)$/)?.[1] || '?';
-            
-            if (pointDeduction === 0) {
-                confirmDialog.innerHTML = `
+        // ตรวจสอบว่าใช้ hint นี้ไปแล้วหรือยัง
+        if (userProgress.hintsUsed[hintId]) {
+            // เคยใช้แล้ว เปิดได้เลยไม่ต้องยืนยัน
+            hint.style.display = 'block';
+            return;
+        }
+
+        // หา challenge type และ hint number จาก hintId
+        // format: {challengeType}hint{number} เช่น "sqlhint1", "cryptohint2"
+        const matches = hintId.match(/^(.+?)hint(\d+)$/);
+        if (!matches) {
+            hint.style.display = 'block';
+            return;
+        }
+
+        const challengeType = matches[1];
+        const hintNumber = parseInt(matches[2]);
+
+        // นับว่าใช้ hint ไปกี่ข้อแล้วสำหรับ challenge นี้
+        const usedHintsCount = Object.keys(userProgress.hintsUsed)
+            .filter(key => key.startsWith(challengeType + 'hint'))
+            .length;
+
+        // ถ้าเป็น hint ข้อแรก ไม่ต้องหักคะแนน
+        if (usedHintsCount === 0) {
+            showHintConfirmation(hintId, 0, () => {
+                hint.style.display = 'block';
+                userProgress.hintsUsed[hintId] = true;
+                updatePointsDisplay();
+            });
+        } else {
+            // hint ข้อถัดไป หักคะแนน 10
+            showHintConfirmation(hintId, HINT_PENALTY, () => {
+                hint.style.display = 'block';
+                userProgress.hintsUsed[hintId] = true;
+                updatePointsDisplay();
+            });
+        }
+    }
+
+    function showHintConfirmation(hintId, pointDeduction, onConfirm) {
+        const confirmDialog = document.createElement('div');
+        confirmDialog.className = 'confirm-overlay';
+
+        const hintNumber = hintId.match(/hint(\d+)$/)?.[1] || '?';
+
+        if (pointDeduction === 0) {
+            confirmDialog.innerHTML = `
                     <div class="confirm-dialog">
                         <h3>💡 เปิด Hint ${hintNumber}</h3>
                         <p>นี่เป็น hint ข้อแรก <strong style="color: var(--success);">ไม่มีการหักคะแนน</strong></p>
@@ -153,8 +168,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                     </div>
                 `;
-            } else {
-                confirmDialog.innerHTML = `
+        } else {
+            confirmDialog.innerHTML = `
                     <div class="confirm-dialog">
                         <h3>⚠️ ยืนยันการใช้ Hint ${hintNumber}</h3>
                         <p>การเปิด hint นี้จะหัก <strong style="color: var(--danger);">${pointDeduction} คะแนน</strong></p>
@@ -171,454 +186,457 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                     </div>
                 `;
-            }
-            
-            document.body.appendChild(confirmDialog);
-            
-            // เก็บ callback function
-            confirmDialog.dataset.onConfirm = 'hintConfirmCallback';
-            window.hintConfirmCallback = onConfirm;
-            
-            // Animate in
-            setTimeout(() => confirmDialog.classList.add('show'), 10);
         }
 
-        function closeHintConfirmDialog() {
-            const dialog = document.querySelector('.confirm-overlay');
-            if (dialog) {
-                dialog.classList.remove('show');
-                setTimeout(() => {
-                    dialog.remove();
-                    delete window.hintConfirmCallback;
-                }, 300);
-            }
-        }
+        document.body.appendChild(confirmDialog);
 
-        function confirmHint() {
-            if (window.hintConfirmCallback) {
-                window.hintConfirmCallback();
-                delete window.hintConfirmCallback;
-            }
-            closeHintConfirmDialog();
-        }
+        // เก็บ callback function
+        confirmDialog.dataset.onConfirm = 'hintConfirmCallback';
+        window.hintConfirmCallback = onConfirm;
 
-        function updatePointsDisplay() {
-            // อัพเดท display ของ current points ในทุก challenge
-            const pointsElements = document.querySelectorAll('.current-points');
-            pointsElements.forEach(el => {
-                const challengeType = el.closest('[id*="hint"]')?.id.match(/^(.+?)hint/)?.[1];
-                if (challengeType) {
-                    const basePoints = getBaseChallengePoints(challengeType);
-                    const hintsUsed = Object.keys(userProgress.hintsUsed)
-                        .filter(key => key.startsWith(challengeType + 'hint'))
-                        .length;
-                    // hint ข้อแรกไม่หัก, ข้อถัดไปหัก 10 ต่อข้อ
-                    const deduction = Math.max(0, (hintsUsed - 1) * HINT_PENALTY);
-                    const currentPoints = Math.max(0, basePoints - deduction);
-                    el.textContent = currentPoints;
-                }
-            });
-        }
+        // Animate in
+        setTimeout(() => confirmDialog.classList.add('show'), 10);
+    }
 
-        function getBaseChallengePoints(challengeType) {
-            // คะแนนฐานของแต่ละ challenge
-            const pointsMap = {
-                'sql': 100,
-                'cmd': 250,
-                'xss': 350,
-                'jwt': 400,
-                'multi': 100,
-                'xor': 300,
-                'rsa': 350,
-                'custom': 450,
-                'birthday': 100,
-                'geo': 250,
-                'stego': 400,
-                'disk': 500,
-                'packet': 150,
-                'dns': 300,
-                'arp': 400,
-                'ssl': 550,
-                'asm': 150,
-                'crackme': 350,
-                'obfuscated': 450,
-                'malware': 550,
-                'apk': 150,
-                'root': 300,
-                'sslPin': 400,
-                'native': 500
-            };
-            return pointsMap[challengeType] || 100;
-        }
-
-        function showNotification(message, type = 'success') {
-            const notification = document.createElement('div');
-            notification.className = `notification notification-${type}`;
-            notification.textContent = message;
-            document.body.appendChild(notification);
-            
-            setTimeout(() => notification.classList.add('show'), 10);
-            
+    function closeHintConfirmDialog() {
+        const dialog = document.querySelector('.confirm-overlay');
+        if (dialog) {
+            dialog.classList.remove('show');
             setTimeout(() => {
-                notification.classList.remove('show');
-                setTimeout(() => notification.remove(), 300);
-            }, 3000);
+                dialog.remove();
+                delete window.hintConfirmCallback;
+            }, 300);
         }
+    }
 
-        // อัพเดทฟังก์ชัน checkFlag ให้คำนวณคะแนนหลังหัก hint
-        function checkFlag(challengeType, correctFlag, basePoints = 100) {
-            const inputId = challengeType + 'Flag';
-            const successId = challengeType + 'Success';
-            const errorId = challengeType + 'Error';
-            
-            const userFlag = document.getElementById(inputId)?.value.trim();
-            const successMsg = document.getElementById(successId);
-            const errorMsg = document.getElementById(errorId);
-            
-            if (!userFlag) {
-                if (errorMsg) {
-                    errorMsg.style.display = 'block';
-                    errorMsg.textContent = '⚠️ กรุณาใส่ flag';
-                    setTimeout(() => errorMsg.style.display = 'none', 3000);
-                }
-                return;
-            }
-            
-            if (userFlag === correctFlag) {
-                // คำนวณคะแนนหลังหัก hint
-                const hintsUsedCount = Object.keys(userProgress.hintsUsed)
+    function confirmHint() {
+        if (window.hintConfirmCallback) {
+            window.hintConfirmCallback();
+            delete window.hintConfirmCallback;
+        }
+        closeHintConfirmDialog();
+    }
+
+    function updatePointsDisplay() {
+        // อัพเดท display ของ current points ในทุก challenge
+        const pointsElements = document.querySelectorAll('.current-points');
+        pointsElements.forEach(el => {
+            const challengeType = el.closest('[id*="hint"]')?.id.match(/^(.+?)hint/)?.[1];
+            if (challengeType) {
+                const basePoints = getBaseChallengePoints(challengeType);
+                const hintsUsed = Object.keys(userProgress.hintsUsed)
                     .filter(key => key.startsWith(challengeType + 'hint'))
                     .length;
-                // hint ข้อแรกไม่หัก
-                const deduction = Math.max(0, (hintsUsedCount - 1) * HINT_PENALTY);
-                const finalPoints = Math.max(0, basePoints - deduction);
-                
-                userProgress.currentPoints += finalPoints;
-                userProgress.solvedChallenges.add(challengeType);
-                
-                if (successMsg) {
-                    successMsg.style.display = 'block';
-                    if (hintsUsedCount > 0) {
-                        successMsg.innerHTML = `🎉 ถูกต้อง! +${finalPoints} คะแนน<br>
+                // hint ข้อแรกไม่หัก, ข้อถัดไปหัก 10 ต่อข้อ
+                const deduction = Math.max(0, (hintsUsed - 1) * HINT_PENALTY);
+                const currentPoints = Math.max(0, basePoints - deduction);
+                el.textContent = currentPoints;
+            }
+        });
+    }
+
+    function getBaseChallengePoints(challengeType) {
+        // คะแนนฐานของแต่ละ challenge
+        const pointsMap = {
+            'sql': 100,
+            'cmd': 250,
+            'xss': 350,
+            'jwt': 400,
+            'multi': 100,
+            'xor': 300,
+            'rsa': 350,
+            'custom': 450,
+            'birthday': 100,
+            'geo': 250,
+            'stego': 400,
+            'disk': 500,
+            'packet': 150,
+            'dns': 300,
+            'arp': 400,
+            'ssl': 550,
+            'asm': 150,
+            'crackme': 350,
+            'obfuscated': 450,
+            'malware': 550,
+            'apk': 150,
+            'root': 300,
+            'sslPin': 400,
+            'native': 500
+        };
+        return pointsMap[challengeType] || 100;
+    }
+
+    function showNotification(message, type = 'success') {
+        const notification = document.createElement('div');
+        notification.className = `notification notification-${type}`;
+        notification.textContent = message;
+        document.body.appendChild(notification);
+
+        setTimeout(() => notification.classList.add('show'), 10);
+
+        setTimeout(() => {
+            notification.classList.remove('show');
+            setTimeout(() => notification.remove(), 300);
+        }, 3000);
+    }
+
+    // อัพเดทฟังก์ชัน checkFlag ให้คำนวณคะแนนหลังหัก hint
+    function checkFlag(challengeType, correctFlag, basePoints = 100) {
+        const inputId = challengeType + 'Flag';
+        const successId = challengeType + 'Success';
+        const errorId = challengeType + 'Error';
+
+        const userFlag = document.getElementById(inputId)?.value.trim();
+        const successMsg = document.getElementById(successId);
+        const errorMsg = document.getElementById(errorId);
+
+        if (!userFlag) {
+            if (errorMsg) {
+                errorMsg.style.display = 'block';
+                errorMsg.textContent = '⚠️ กรุณาใส่ flag';
+                setTimeout(() => errorMsg.style.display = 'none', 3000);
+            }
+            return;
+        }
+
+        if (userFlag === correctFlag) {
+            // คำนวณคะแนนหลังหัก hint
+            const hintsUsedCount = Object.keys(userProgress.hintsUsed)
+                .filter(key => key.startsWith(challengeType + 'hint'))
+                .length;
+            // hint ข้อแรกไม่หัก
+            const deduction = Math.max(0, (hintsUsedCount - 1) * HINT_PENALTY);
+            const finalPoints = Math.max(0, basePoints - deduction);
+
+            userProgress.currentPoints += finalPoints;
+            userProgress.solvedChallenges.add(challengeType);
+
+            if (successMsg) {
+                successMsg.style.display = 'block';
+                if (hintsUsedCount > 0) {
+                    successMsg.innerHTML = `🎉 ถูกต้อง! +${finalPoints} คะแนน<br>
                             <small style="color: var(--gray);">(คะแนนเต็ม: ${basePoints}, ใช้ hint: ${hintsUsedCount} ข้อ, หัก: ${deduction} คะแนน)</small>`;
-                    } else {
-                        successMsg.innerHTML = `🎉 ถูกต้อง! +${finalPoints} คะแนน`;
-                    }
+                } else {
+                    successMsg.innerHTML = `🎉 ถูกต้อง! +${finalPoints} คะแนน`;
                 }
-                if (errorMsg) errorMsg.style.display = 'none';
-                
-                showNotification(`Challenge completed! +${finalPoints} points`, 'success');
-                updatePointsDisplay();
-            } else {
-                if (successMsg) successMsg.style.display = 'none';
-                if (errorMsg) {
-                    errorMsg.style.display = 'block';
-                    setTimeout(() => errorMsg.style.display = 'none', 3000);
-                }
+            }
+            if (errorMsg) errorMsg.style.display = 'none';
+
+            showNotification(`Challenge completed! +${finalPoints} points`, 'success');
+            updatePointsDisplay();
+        } else {
+            if (successMsg) successMsg.style.display = 'none';
+            if (errorMsg) {
+                errorMsg.style.display = 'block';
+                setTimeout(() => errorMsg.style.display = 'none', 3000);
             }
         }
-        
-        const challengeData = {
-            web: {
-                title: '🌐︎ Web Security Challenges',
-                challenges: [
-                    {
-                        name: 'SQL Injection Login Bypass',
-                        description: 'ระบบ login มีช่องโหว่ SQL Injection ที่ต้องใช้เทคนิคขั้นสูง bypass ด้วย comment และ logic manipulation',
-                        points: 100,
-                        difficulty: 'easy',
-                        solved: 1234,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'sqlInjection'
-                    },
-                    {
-                        name: 'Command Injection Shell',
-                        description: 'Web app ที่รัน system commands โดยไม่ filter input ให้หา flag ที่ซ่อนอยู่ในระบบไฟล์',
-                        points: 250,
-                        difficulty: 'medium',
-                        solved: 867,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'cmdInjection'
-                    },
-                    {
-                        name: 'XSS Cookie Stealer',
-                        description: 'หาช่องโหว่ XSS และสร้าง payload ที่ซับซ้อนเพื่อ bypass XSS filter และ steal admin session',
-                        points: 350,
-                        difficulty: 'hard',
-                        solved: 423,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'xssStealer'
-                    },
-                    {
-                        name: 'JWT Token Manipulation',
-                        description: 'แก้ไข JWT token โดยใช้ช่องโหว่ Algorithm Confusion เพื่อเข้าถึงข้อมูลของ admin',
-                        points: 400,
-                        difficulty: 'expert',
-                        solved: 189,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'jwtHack'
-                    }
-                ]
-            },
-            crypto: {
-                title: '🔐︎ Cryptography Challenges',
-                challenges: [
-                    {
-                        name: 'Multi-Layer Cipher',
-                        description: 'ข้อความถูกเข้ารหัสด้วย Caesar, Base64, และ ROT13 ซ้อนกัน ต้องถอดรหัสทีละชั้น',
-                        points: 100,
-                        difficulty: 'easy',
-                        solved: 2145,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'multiCipher'
-                    },
-                    {
-                        name: 'XOR Brute Force',
-                        description: 'ข้อความถูกเข้ารหัสด้วย XOR single-byte key ให้ brute force หา key และถอดรหัส',
-                        points: 300,
-                        difficulty: 'medium',
-                        solved: 892,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'xorKnown'
-                    },
-                    {
-                        name: 'RSA Small Exponent Attack',
-                        description: 'RSA ที่ใช้ e=3 และมี 3 ciphertext ของข้อความเดียวกัน ใช้ Chinese Remainder Theorem โจมตี',
-                        points: 350,
-                        difficulty: 'hard',
-                        solved: 534,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'rsaWeak'
-                    },
-                    {
-                        name: 'Custom Cipher Breaking',
-                        description: 'วิเคราะห์และถอดรหัส custom encryption algorithm ที่มีจุดอ่อนในการ implement',
-                        points: 450,
-                        difficulty: 'expert',
-                        solved: 234,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'customCipher'
-                    }
-                ]
-            },
-            forensics: {
-                title: '🕵︎ Digital Forensics Challenges',
-                challenges: [
-                    {
-                        name: 'Hidden Birthday Message',
-                        description: 'รูปภาพ Happy Birthday มีข้อมูลที่ซ่อนอยู่ใน EXIF metadata ให้ใช้เครื่องมือวิเคราะห์หา flag',
-                        points: 100,
-                        difficulty: 'easy',
-                        solved: 1432,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'birthdayExif'
-                    },
-                    {
-                        name: 'Geolocation Mystery',
-                        description: 'รูปถ่ายจากตึกมี GPS coordinates ใน metadata ให้หาตำแหน่งและแปลงเป็น MD5 hash',
-                        points: 250,
-                        difficulty: 'medium',
-                        solved: 856,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'geoLocation'
-                    },
-                    {
-                        name: 'Steganography Battlefield',
-                        description: 'รูปภาพธงขาวมีไฟล์ซ่อนอยู่ข้างใน ต้องใช้ binwalk extract แล้วถอดรหัส Base64',
-                        points: 400,
-                        difficulty: 'hard',
-                        solved: 543,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'stegoFlag'
-                    },
-                    {
-                        name: 'Disk Analysis',
-                        description: 'วิเคราะห์ disk image เพื่อกู้คืนไฟล์ที่ถูกลบและหา flag',
-                        points: 500,
-                        difficulty: 'expert',
-                        solved: 267,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'diskAnalysis'
-                    }
-                ]
-            },
-            network: {
-                title: '🖧︎ Network Security Challenges',
-                challenges: [
-                    {
-                        name: 'Packet Sniffer Basic',
-                        description: 'วิเคราะห์ HTTP packets และหา credentials ที่ส่งแบบ plaintext',
-                        points: 150,
-                        difficulty: 'easy',
-                        solved: 987,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'packetBasic'
-                    },
-                    {
-                        name: 'DNS Tunneling Extract',
-                        description: 'Data ถูก exfiltrate ผ่าน DNS queries ให้ decode และ reconstruct ข้อมูลต้นฉบับ',
-                        points: 300,
-                        difficulty: 'medium',
-                        solved: 543,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'dnsTunnel'
-                    },
-                    {
-                        name: 'ARP Spoofing Attack',
-                        description: 'จำลอง ARP spoofing attack และ intercept traffic ระหว่าง victim กับ gateway',
-                        points: 400,
-                        difficulty: 'hard',
-                        solved: 312,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'arpSpoof'
-                    },
-                    {
-                        name: 'SSL Strip Analysis',
-                        description: 'วิเคราะห์ HTTPS traffic ที่ถูก downgrade เป็น HTTP ด้วย SSL stripping',
-                        points: 550,
-                        difficulty: 'expert',
-                        solved: 178,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'sslStrip'
-                    }
-                ]
-            },
-            reverse: {
-                title: '⚙︎ Reverse Engineering Challenges',
-                challenges: [
-                    {
-                        name: 'Assembly Password Check',
-                        description: 'Program ตรวจสอบ password โดยใช้ assembly code ให้วิเคราะห์ algorithm และหา password',
-                        points: 150,
-                        difficulty: 'easy',
-                        solved: 876,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'asmPassword'
-                    },
-                    {
-                        name: 'Binary Crackme',
-                        description: 'Binary ที่ validate serial key ด้วย mathematical operations ให้ reverse algorithm',
-                        points: 350,
-                        difficulty: 'medium',
-                        solved: 432,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'crackme'
-                    },
-                    {
-                        name: 'Obfuscated Code Analysis',
-                        description: 'Code ที่ถูก obfuscate ด้วย string encoding และ control flow flattening',
-                        points: 450,
-                        difficulty: 'hard',
-                        solved: 234,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'obfuscated'
-                    },
-                    {
-                        name: 'Malware Behavior Analysis',
-                        description: 'วิเคราะห์ malware sample และหา C2 server address ที่ซ่อนอยู่ในโค้ด',
-                        points: 550,
-                        difficulty: 'expert',
-                        solved: 123,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'malwareAnalysis'
-                    }
-                ]
-            },
-            mobile: {
-                title: '📱︎ Mobile Security Challenges',
-                challenges: [
-                    {
-                        name: 'APK String Analysis',
-                        description: 'Decompile APK และหา hardcoded API key ที่ซ่อนอยู่ใน strings',
-                        points: 150,
-                        difficulty: 'easy',
-                        solved: 765,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'apkStrings'
-                    },
-                    {
-                        name: 'Root Detection Bypass',
-                        description: 'App ตรวจสอบ root ด้วยหลายวิธี ให้หาทางข้ามการตรวจสอบและเข้าถึง hidden feature',
-                        points: 300,
-                        difficulty: 'medium',
-                        solved: 456,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'rootBypass'
-                    },
-                    {
-                        name: 'SSL Pinning Challenge',
-                        description: 'App ใช้ certificate pinning ให้ bypass และ intercept HTTPS traffic',
-                        points: 400,
-                        difficulty: 'hard',
-                        solved: 289,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'sslPinning'
-                    },
-                    {
-                        name: 'Native Library Reverse',
-                        description: 'Reverse engineer native SO library ที่มี encryption function ซับซ้อน',
-                        points: 500,
-                        difficulty: 'expert',
-                        solved: 145,
-                        status: 'not-started',
-                        interactive: true,
-                        interactiveId: 'nativeLib'
-                    }
-                ]
-            }
-        };
+    }
 
-        function openChallengeList(category) {
-            const data = challengeData[category];
+    const challengeData = {
+        web: {
+            title: '🌐︎ Web Security Challenges',
+            challenges: [
+                {
+                    name: 'SQL Injection Login Bypass',
+                    description: 'ระบบ login มีช่องโหว่ SQL Injection ที่ต้องใช้เทคนิคขั้นสูง bypass ด้วย comment และ logic manipulation',
+                    points: 100,
+                    difficulty: 'easy',
+                    solved: 1234,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'sqlInjection'
+                },
+                {
+                    name: 'Command Injection Shell',
+                    description: 'Web app ที่รัน system commands โดยไม่ filter input ให้หา flag ที่ซ่อนอยู่ในระบบไฟล์',
+                    points: 250,
+                    difficulty: 'medium',
+                    solved: 867,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'cmdInjection'
+                },
+                {
+                    name: 'XSS Cookie Stealer',
+                    description: 'หาช่องโหว่ XSS และสร้าง payload ที่ซับซ้อนเพื่อ bypass XSS filter และ steal admin session',
+                    points: 350,
+                    difficulty: 'hard',
+                    solved: 423,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'xssStealer'
+                },
+                {
+                    name: 'JWT Token Manipulation',
+                    description: 'แก้ไข JWT token โดยใช้ช่องโหว่ Algorithm Confusion เพื่อเข้าถึงข้อมูลของ admin',
+                    points: 400,
+                    difficulty: 'expert',
+                    solved: 189,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'jwtHack'
+                }
+            ]
+        },
+        crypto: {
+            title: '🔐︎ Cryptography Challenges',
+            challenges: [
+                {
+                    name: 'Multi-Layer Cipher',
+                    description: 'ข้อความถูกเข้ารหัสด้วย Caesar, Base64, และ ROT13 ซ้อนกัน ต้องถอดรหัสทีละชั้น',
+                    points: 100,
+                    difficulty: 'easy',
+                    solved: 2145,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'multiCipher'
+                },
+                {
+                    name: 'XOR Brute Force',
+                    description: 'ข้อความถูกเข้ารหัสด้วย XOR single-byte key ให้ brute force หา key และถอดรหัส',
+                    points: 300,
+                    difficulty: 'medium',
+                    solved: 892,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'xorKnown'
+                },
+                {
+                    name: 'RSA Small Exponent Attack',
+                    description: 'RSA ที่ใช้ e=3 และมี 3 ciphertext ของข้อความเดียวกัน ใช้ Chinese Remainder Theorem โจมตี',
+                    points: 350,
+                    difficulty: 'hard',
+                    solved: 534,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'rsaWeak'
+                },
+                {
+                    name: 'Custom Cipher Breaking',
+                    description: 'วิเคราะห์และถอดรหัส custom encryption algorithm ที่มีจุดอ่อนในการ implement',
+                    points: 450,
+                    difficulty: 'expert',
+                    solved: 234,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'customCipher'
+                }
+            ]
+        },
+        forensics: {
+            title: '🕵︎ Digital Forensics Challenges',
+            challenges: [
+                {
+                    name: 'Hidden Birthday Message',
+                    description: 'รูปภาพ Happy Birthday มีข้อมูลที่ซ่อนอยู่ใน EXIF metadata ให้ใช้เครื่องมือวิเคราะห์หา flag',
+                    points: 100,
+                    difficulty: 'easy',
+                    solved: 1432,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'birthdayExif'
+                },
+                {
+                    name: 'Geolocation Mystery',
+                    description: 'รูปถ่ายจากตึกมี GPS coordinates ใน metadata ให้หาตำแหน่งและแปลงเป็น MD5 hash',
+                    points: 250,
+                    difficulty: 'medium',
+                    solved: 856,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'geoLocation'
+                },
+                {
+                    name: 'Steganography Battlefield',
+                    description: 'รูปภาพธงขาวมีไฟล์ซ่อนอยู่ข้างใน ต้องใช้ binwalk extract แล้วถอดรหัส Base64',
+                    points: 400,
+                    difficulty: 'hard',
+                    solved: 543,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'stegoFlag'
+                },
+                {
+                    name: 'Disk Analysis',
+                    description: 'วิเคราะห์ disk image เพื่อกู้คืนไฟล์ที่ถูกลบและหา flag',
+                    points: 500,
+                    difficulty: 'expert',
+                    solved: 267,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'diskAnalysis'
+                }
+            ]
+        },
+        network: {
+            title: '🖧︎ Network Security Challenges',
+            challenges: [
+                {
+                    name: 'Packet Sniffer Basic',
+                    description: 'วิเคราะห์ HTTP packets และหา credentials ที่ส่งแบบ plaintext',
+                    points: 150,
+                    difficulty: 'easy',
+                    solved: 987,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'packetBasic'
+                },
+                {
+                    name: 'DNS Tunneling Extract',
+                    description: 'Data ถูก exfiltrate ผ่าน DNS queries ให้ decode และ reconstruct ข้อมูลต้นฉบับ',
+                    points: 300,
+                    difficulty: 'medium',
+                    solved: 543,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'dnsTunnel'
+                },
+                {
+                    name: 'ARP Spoofing Attack',
+                    description: 'จำลอง ARP spoofing attack และ intercept traffic ระหว่าง victim กับ gateway',
+                    points: 400,
+                    difficulty: 'hard',
+                    solved: 312,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'arpSpoof'
+                },
+                {
+                    name: 'SSL Strip Analysis',
+                    description: 'วิเคราะห์ HTTPS traffic ที่ถูก downgrade เป็น HTTP ด้วย SSL stripping',
+                    points: 550,
+                    difficulty: 'expert',
+                    solved: 178,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'sslStrip'
+                }
+            ]
+        },
+        reverse: {
+            title: '⚙︎ Reverse Engineering Challenges',
+            challenges: [
+                {
+                    name: 'Assembly Password Check',
+                    description: 'Program ตรวจสอบ password โดยใช้ assembly code ให้วิเคราะห์ algorithm และหา password',
+                    points: 150,
+                    difficulty: 'easy',
+                    solved: 876,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'asmPassword'
+                },
+                {
+                    name: 'Binary Crackme',
+                    description: 'Binary ที่ validate serial key ด้วย mathematical operations ให้ reverse algorithm',
+                    points: 350,
+                    difficulty: 'medium',
+                    solved: 432,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'crackme'
+                },
+                {
+                    name: 'Obfuscated Code Analysis',
+                    description: 'Code ที่ถูก obfuscate ด้วย string encoding และ control flow flattening',
+                    points: 450,
+                    difficulty: 'hard',
+                    solved: 234,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'obfuscated'
+                },
+                {
+                    name: 'Malware Behavior Analysis',
+                    description: 'วิเคราะห์ malware sample และหา C2 server address ที่ซ่อนอยู่ในโค้ด',
+                    points: 550,
+                    difficulty: 'expert',
+                    solved: 123,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'malwareAnalysis'
+                }
+            ]
+        },
+        mobile: {
+            title: '📱︎ Mobile Security Challenges',
+            challenges: [
+                {
+                    name: 'APK String Analysis',
+                    description: 'Decompile APK และหา hardcoded API key ที่ซ่อนอยู่ใน strings',
+                    points: 150,
+                    difficulty: 'easy',
+                    solved: 765,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'apkStrings'
+                },
+                {
+                    name: 'Root Detection Bypass',
+                    description: 'App ตรวจสอบ root ด้วยหลายวิธี ให้หาทางข้ามการตรวจสอบและเข้าถึง hidden feature',
+                    points: 300,
+                    difficulty: 'medium',
+                    solved: 456,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'rootBypass'
+                },
+                {
+                    name: 'SSL Pinning Challenge',
+                    description: 'App ใช้ certificate pinning ให้ bypass และ intercept HTTPS traffic',
+                    points: 400,
+                    difficulty: 'hard',
+                    solved: 289,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'sslPinning'
+                },
+                {
+                    name: 'Native Library Reverse',
+                    description: 'Reverse engineer native SO library ที่มี encryption function ซับซ้อน',
+                    points: 500,
+                    difficulty: 'expert',
+                    solved: 145,
+                    status: 'not-started',
+                    interactive: true,
+                    interactiveId: 'nativeLib'
+                }
+            ]
+        }
+    };
+
+    async function openChallengeList(category) {
+        const user = await requireChallengeAuth();
+        if (!user) return;
+
+        const data = challengeData[category];
             if (!data) return;
 
-            const modal = document.getElementById('challengeModal');
-            const modalTitle = document.getElementById('modalTitle');
-            const challengeList = document.getElementById('challengeList');
-            const progressText = document.getElementById('progressText');
-            const progressFill = document.getElementById('progressFill');
+        const modal = document.getElementById('challengeModal');
+        const modalTitle = document.getElementById('modalTitle');
+        const challengeList = document.getElementById('challengeList');
+        const progressText = document.getElementById('progressText');
+        const progressFill = document.getElementById('progressFill');
 
-            modalTitle.textContent = data.title;
+        modalTitle.textContent = data.title;
 
-            const totalChallenges = data.challenges.length;
-            const completedChallenges = data.challenges.filter(c => c.status === 'completed').length;
-            const progressPercentage = Math.round((completedChallenges / totalChallenges) * 100);
+        const totalChallenges = data.challenges.length;
+        const completedChallenges = data.challenges.filter(c => c.status === 'completed').length;
+        const progressPercentage = Math.round((completedChallenges / totalChallenges) * 100);
 
-            progressText.textContent = `${completedChallenges} of ${totalChallenges} completed (${progressPercentage}%)`;
-            progressFill.style.width = `${progressPercentage}%`;
+        progressText.textContent = `${completedChallenges} of ${totalChallenges} completed (${progressPercentage}%)`;
+        progressFill.style.width = `${progressPercentage}%`;
 
-            challengeList.innerHTML = data.challenges.map(challenge => {
-                let statusBadge = '';
-                if (challenge.status === 'completed') {
-                    statusBadge = '<div class="status-badge status-completed">COMPLETE</div>';
-                } else {
-                    statusBadge = '<div class="status-badge status-not-started">NOT STARTED</div>';
-                }
+        challengeList.innerHTML = data.challenges.map(challenge => {
+            let statusBadge = '';
+            if (challenge.status === 'completed') {
+                statusBadge = '<div class="status-badge status-completed">COMPLETE</div>';
+            } else {
+                statusBadge = '<div class="status-badge status-not-started">NOT STARTED</div>';
+            }
 
-                return `
+            return `
                     <div class="challenge-item ${challenge.status === 'completed' ? 'completed' : ''}" 
                          onclick="${challenge.interactive ? `openInteractiveChallenge('${challenge.interactiveId}')` : ''}">
                         <div class="challenge-header">
@@ -631,11 +649,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="challenge-description">${challenge.description}</div>
                         <div class="challenge-meta">
                             <div class="difficulty-badges">
-                                <span class="difficulty-badge difficulty-${challenge.difficulty}">${
-                                    challenge.difficulty === 'easy' ? 'Easy' : 
-                                    challenge.difficulty === 'medium' ? 'Medium' : 
-                                    challenge.difficulty === 'hard' ? 'Hard' : 'Expert'
-                                }</span>
+                                <span class="difficulty-badge difficulty-${challenge.difficulty}">${challenge.difficulty === 'easy' ? 'Easy' :
+                    challenge.difficulty === 'medium' ? 'Medium' :
+                        challenge.difficulty === 'hard' ? 'Hard' : 'Expert'
+                }</span>
                             </div>
                             <div class="challenge-stats">
                                 <span>👥 ${challenge.solved.toLocaleString()} solved</span>
@@ -643,17 +660,17 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                     </div>
                 `;
-            }).join('');
+        }).join('');
 
-            modal.classList.add('active');
-        }
+        modal.classList.add('active');
+    }
 
-        function closeModal() {
-            document.getElementById('challengeModal').classList.remove('active');
-        }
+    function closeModal() {
+        document.getElementById('challengeModal').classList.remove('active');
+    }
 
-        const interactiveChallenges = {
-            //Web 1
+    const interactiveChallenges = {
+        //Web 1
         sqlInjection: {
             content: `
                 <h2 style="color: var(--primary); margin-bottom: 1rem;">🌐 SQL Injection Login Bypass</h2>
@@ -774,9 +791,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="error-message" id="sqlError">❌ Incorrect flag. Try again!</div>
             `
         },
-            //Web 2
-            cmdInjection: {
-                content: `
+        //Web 2
+        cmdInjection: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">🌐 Command Injection Shell</h2>
                     
                     <div class="analysis-results">
@@ -827,10 +844,10 @@ Ping Target: <input type="text" id="cmdInput" placeholder="127.0.0.1" style="bac
                     <div class="success-message" id="cmdSuccess">🎉 Correct! You got remote command execution!</div>
                     <div class="error-message" id="cmdError">❌ Incorrect flag. Keep exploring the filesystem!</div>
                 `
-            },
-            //Web 3
-            xssStealer: {
-                content: `
+        },
+        //Web 3
+        xssStealer: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">🌐 XSS Cookie Stealer</h2>
                     
                     <div class="analysis-results">
@@ -882,10 +899,10 @@ Your Comment: <textarea id="xssInput" style="background: transparent; border: 1p
                     <div class="success-message" id="xssSuccess">🎉 Correct! You successfully stole the admin cookie!</div>
                     <div class="error-message" id="xssError">❌ Incorrect flag. Try different XSS payloads!</div>
                 `
-            },
-            //Web 4
-            jwtHack: {
-                content: `
+        },
+        //Web 4
+        jwtHack: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">🌐 JWT Token Manipulation</h2>
                     
                     <div class="analysis-results">
@@ -951,12 +968,12 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     <div class="success-message" id="jwtSuccess">🎉 Correct! You exploited the JWT vulnerability!</div>
                     <div class="error-message" id="jwtError">❌ Incorrect flag. Try manipulating the JWT token!</div>
                 `
-            },
-            // ============================================
-            // CRYPTO 1: Multi-Layer Cipher (100 points)
-            // ============================================
-            multiCipher: {
-                content: `
+        },
+        // ============================================
+        // CRYPTO 1: Multi-Layer Cipher (100 points)
+        // ============================================
+        multiCipher: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">🔐 Multi-Layer Cipher</h2>
                     
                     <div class="analysis-results">
@@ -1082,13 +1099,13 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     <div class="success-message" id="multiSuccess">✓ Correct!</div>
                     <div class="error-message" id="multiError">✗ Wrong!</div>
                 `
-            },
+        },
 
-            // ============================================
-            // CRYPTO 2: XOR Key Recovery (300 points)
-            // ============================================
-            xorKnown: {
-                content: `
+        // ============================================
+        // CRYPTO 2: XOR Key Recovery (300 points)
+        // ============================================
+        xorKnown: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">⚡ XOR Key Recovery</h2>
                     
                     <div class="analysis-results">
@@ -1192,13 +1209,13 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     <div class="success-message" id="xorSuccess">✓ Correct!</div>
                     <div class="error-message" id="xorError">✗ Wrong!</div>
                 `
-            },
+        },
 
-            // ============================================
-            // CRYPTO 3: RSA Factorization (350 points)
-            // ============================================
-            rsaWeak: {
-                content: `
+        // ============================================
+        // CRYPTO 3: RSA Factorization (350 points)
+        // ============================================
+        rsaWeak: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">🔐 RSA Factorization</h2>
                     
                     <div class="analysis-results">
@@ -1313,13 +1330,13 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     <div class="success-message" id="rsaSuccess">✓ Correct!</div>
                     <div class="error-message" id="rsaError">✗ Wrong!</div>
                 `
-            },
+        },
 
-            // ============================================
-            // CRYPTO 4: Pattern Analysis (450 points)
-            // ============================================
-            customCipher: {
-                content: `
+        // ============================================
+        // CRYPTO 4: Pattern Analysis (450 points)
+        // ============================================
+        customCipher: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">🔐 Multi-Layer Pattern</h2>
                     
                     <div class="analysis-results">
@@ -1426,10 +1443,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     <div class="success-message" id="customSuccess">✓ Correct!</div>
                     <div class="error-message" id="customError">✗ Wrong!</div>
                 `
-            },
-            //Forensic 1
-            birthdayExif: {
-                content: `
+        },
+        //Forensic 1
+        birthdayExif: {
+            content: `
                 <h2 style="color: var(--primary); margin-bottom: 1rem;">🔍 Hidden Birthday Message</h2>
                 <div class="analysis-results">
                 <h4>🎯 Mission Objective</h4>
@@ -1491,11 +1508,11 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                 <div class="success-message" id="birthdaySuccess">🎉 Correct!</div>
                 <div class="error-message" id="birthdayError">❌ Incorrect flag.</div>
                 `
-                },
-            //Forensic 2
-            geoLocation: {
+        },
+        //Forensic 2
+        geoLocation: {
 
-                content: `
+            content: `
                 <h2 style="color: var(--primary); margin-bottom: 1rem;">🔍 Geolocation Mystery</h2>
                 <div class="analysis-results">
                 <h4>🎯 Mission Objective</h4>
@@ -1580,10 +1597,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
 
                     `
 
-                },
-            //Forensic 3
-            stegoFlag: {
-                content: `
+        },
+        //Forensic 3
+        stegoFlag: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">🔍 Steganography Battlefield</h2>
                     
                     <div class="analysis-results">
@@ -1649,10 +1666,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     <div class="success-message" id="stegoSuccess">🎉 Correct!</div>
                     <div class="error-message" id="stegoError">❌ Incorrect flag.</div>
                 `
-            },
-            //Forensic 4
-            diskAnalysis: {
-                content: `
+        },
+        //Forensic 4
+        diskAnalysis: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">🔍 Disk Image Analysis</h2>
                     
                     <div class="analysis-results">
@@ -1725,10 +1742,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     <div class="success-message" id="diskSuccess">🎉 Correct!</div>
                     <div class="error-message" id="diskError">❌ Incorrect flag.</div>
                 `
-            },
-            //Network 1
-            packetBasic: {
-                content: `
+        },
+        //Network 1
+        packetBasic: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">📡 Packet Sniffer Basic</h2>
                     
                     <div class="analysis-results">
@@ -1789,10 +1806,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     <div class="success-message" id="packetSuccess">🎉 Correct!</div>
                     <div class="error-message" id="packetError">❌ Incorrect flag.</div>
                 `
-            },
-            //Network 2
-            dnsTunnel: {
-                content: `
+        },
+        //Network 2
+        dnsTunnel: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">📡 DNS Tunneling Extract</h2>
                     
                     <div class="analysis-results">
@@ -1851,10 +1868,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     <div class="success-message" id="dnsSuccess">🎉 Correct!</div>
                     <div class="error-message" id="dnsError">❌ Incorrect flag.</div>
                 `
-            },
-            //Network 3
-            arpSpoof: {
-                content: `
+        },
+        //Network 3
+        arpSpoof: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">📡 ARP Spoofing Attack</h2>
                     
                     <div class="analysis-results">
@@ -1914,10 +1931,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     <div class="success-message" id="arpSuccess">🎉 Correct!</div>
                     <div class="error-message" id="arpError">❌ Incorrect flag.</div>
                 `
-            },
-            //Network 4
-            sslStrip: {
-                content: `
+        },
+        //Network 4
+        sslStrip: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">📡 SSL Strip Analysis</h2>
                     
                     <div class="analysis-results">
@@ -1985,10 +2002,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     <div class="success-message" id="sslSuccess">🎉 Correct!</div>
                     <div class="error-message" id="sslError">❌ Incorrect flag.</div>
                 `
-            },
-            //Reversing 1
-            asmPassword: {
-                content: `
+        },
+        //Reversing 1
+        asmPassword: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">⚙️ Assembly Password Check</h2>
                     
                     <div class="analysis-results">
@@ -2079,10 +2096,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     <div class="success-message" id="asmSuccess">🎉 Correct! You reversed the assembly code!</div>
                     <div class="error-message" id="asmError">❌ Incorrect flag. Analyze each character comparison!</div>
                 `
-            },
-            //Reversing 2
-            crackme: {
-                content: `
+        },
+        //Reversing 2
+        crackme: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">⚙️ Binary Crackme</h2>
                     
                     <div class="analysis-results">
@@ -2164,10 +2181,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     <div class="success-message" id="crackmeSuccess">🎉 Correct! You cracked the serial key validation!</div>
                     <div class="error-message" id="crackmeError">❌ Incorrect flag. Reverse the validation algorithm!</div>
                 `
-            },
-            //Reversing 3
-            obfuscated: {
-                content: `
+        },
+        //Reversing 3
+        obfuscated: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">⚙️ Obfuscated Code Analysis</h2>
                     
                     <div class="analysis-results">
@@ -2242,10 +2259,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     <div class="success-message" id="obfuscatedSuccess">🎉 Correct! You deobfuscated the code!</div>
                     <div class="error-message" id="obfuscatedError">❌ Incorrect flag. Decode all hex strings!</div>
                 `
-            },
-            //Reversing 4
-                malwareAnalysis: {
-                        content: `
+        },
+        //Reversing 4
+        malwareAnalysis: {
+            content: `
                             <h2 style="color: var(--primary); margin-bottom: 1rem;">⚙️ Malware Behavior Analysis</h2>
                             
                             <div class="analysis-results">
@@ -2318,10 +2335,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                             <div class="success-message" id="malwareSuccess">🎉 Correct! You analyzed the malware successfully!</div>
                             <div class="error-message" id="malwareError">❌ Incorrect flag. Decode the Base64 string!</div>
                         `
-                    },
-            //Moblile 1
-            apkStrings: {
-                content: `
+        },
+        //Moblile 1
+        apkStrings: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">📱 APK String Analysis</h2>
                     
                     <div class="analysis-results">
@@ -2389,10 +2406,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     <div class="success-message" id="apkSuccess">🎉 Correct!</div>
                     <div class="error-message" id="apkError">❌ Incorrect flag.</div>
                 `
-            },
-            //Mobile 2
-            rootBypass: {
-                content: `
+        },
+        //Mobile 2
+        rootBypass: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">📱 Root Detection Bypass</h2>
                     
                     <div class="analysis-results">
@@ -2460,10 +2477,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     <div class="success-message" id="rootSuccess">🎉 Correct!</div>
                     <div class="error-message" id="rootError">❌ Incorrect flag.</div>
                 `
-            },
-            //Mobile 3
-            sslPinning: {
-                content: `
+        },
+        //Mobile 3
+        sslPinning: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">📱 SSL Pinning Challenge</h2>
                     
                     <div class="analysis-results">
@@ -2522,10 +2539,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     <div class="success-message" id="sslPinSuccess">🎉 Correct!</div>
                     <div class="error-message" id="sslPinError">❌ Incorrect flag.</div>
                 `
-            },
-            //Mobile 4
-            nativeLib: {
-                content: `
+        },
+        //Mobile 4
+        nativeLib: {
+            content: `
                     <h2 style="color: var(--primary); margin-bottom: 1rem;">📱 Native Library Reverse</h2>
                     
                     <div class="analysis-results">
@@ -2587,122 +2604,126 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     <div class="success-message" id="nativeSuccess">🎉 Correct!</div>
                     <div class="error-message" id="nativeError">❌ Incorrect flag.</div>
                 `
-            }
-        };
-        // Open interactive challenge
-        function openInteractiveChallenge(challengeId) {
-            const challenge = interactiveChallenges[challengeId];
-            if (!challenge) {
-                alert('This challenge is not yet available');
-                return;
-            }
-
-            document.getElementById('interactiveContent').innerHTML = challenge.content;
-            document.getElementById('interactiveModal').classList.add('active');
         }
-        function checkFlag(challengeType, correctFlag, basePoints = 100) {
-            const inputId = challengeType + 'Flag';
-            const successId = challengeType + 'Success';
-            const errorId = challengeType + 'Error';
-            
-            const userFlag = document.getElementById(inputId).value.trim();
-            const successMsg = document.getElementById(successId);
-            const errorMsg = document.getElementById(errorId);
-            
-            if (userFlag === correctFlag) {
-                // Calculate final points after hint penalties
-                const hintsUsedCount = Object.keys(userProgress.hintsUsed)
-                    .filter(key => key.startsWith(challengeType)).length;
-                const finalPoints = Math.max(0, basePoints - (hintsUsedCount * HINT_PENALTY));
-                
-                userProgress.currentPoints += finalPoints;
-                userProgress.solvedChallenges.add(challengeType);
-                
-                successMsg.style.display = 'block';
-                successMsg.innerHTML = `🎉 Correct! +${finalPoints} points (Base: ${basePoints}, Hints used: ${hintsUsedCount})`;
+    };
+    // Open interactive challenge
+    async function openInteractiveChallenge(challengeId) {
+            // ✅ กันคนที่ยังไม่ได้ login แต่ somehow เรียกฟังก์ชันนี้ได้
+        const user = await requireChallengeAuth();
+        if (!user) return;
+
+        const challenge = interactiveChallenges[challengeId];
+        if (!challenge) {
+            alert('This challenge is not yet available');
+            return;
+        }
+
+        document.getElementById('interactiveContent').innerHTML = challenge.content;
+        document.getElementById('interactiveModal').classList.add('active');
+    }
+    function checkFlag(challengeType, correctFlag, basePoints = 100) {
+        const inputId = challengeType + 'Flag';
+        const successId = challengeType + 'Success';
+        const errorId = challengeType + 'Error';
+
+        const userFlag = document.getElementById(inputId).value.trim();
+        const successMsg = document.getElementById(successId);
+        const errorMsg = document.getElementById(errorId);
+
+        if (userFlag === correctFlag) {
+            // Calculate final points after hint penalties
+            const hintsUsedCount = Object.keys(userProgress.hintsUsed)
+                .filter(key => key.startsWith(challengeType)).length;
+            const finalPoints = Math.max(0, basePoints - (hintsUsedCount * HINT_PENALTY));
+
+            userProgress.currentPoints += finalPoints;
+            userProgress.solvedChallenges.add(challengeType);
+
+            successMsg.style.display = 'block';
+            successMsg.innerHTML = `🎉 Correct! +${finalPoints} points (Base: ${basePoints}, Hints used: ${hintsUsedCount})`;
+            errorMsg.style.display = 'none';
+
+            updatePointsDisplay();
+            showNotification(`Challenge completed! +${finalPoints} points`, 'success');
+        } else {
+            successMsg.style.display = 'none';
+            errorMsg.style.display = 'block';
+            setTimeout(() => {
                 errorMsg.style.display = 'none';
-                
-                updatePointsDisplay();
-                showNotification(`Challenge completed! +${finalPoints} points`, 'success');
-            } else {
-                successMsg.style.display = 'none';
-                errorMsg.style.display = 'block';
-                setTimeout(() => {
-                    errorMsg.style.display = 'none';
-                }, 3000);
+            }, 3000);
+        }
+    }
+
+    // ============================================
+    // CHALLENGE FUNCTIONS - WEB SECURITY
+    // ============================================
+
+    let sqlAttemptCount = 0;
+    const MAX_SQL_ATTEMPTS = 10;
+
+    function attemptSQLLogin() {
+        if (sqlAttemptCount >= MAX_SQL_ATTEMPTS) {
+            showSQLResult('danger', '❌ Maximum attempts reached! Refresh to try again.');
+            return;
+        }
+
+        sqlAttemptCount++;
+        document.getElementById('sqlAttempts').textContent = sqlAttemptCount;
+
+        const user = document.getElementById('sqlUser').value;
+        const pass = document.getElementById('sqlPass').value;
+        const resultPanel = document.getElementById('sqlResult');
+        const debugPanel = document.getElementById('sqlDebug');
+
+        if (!user || !pass) {
+            showSQLResult('warning', '⚠️ Please enter both username and password');
+            updateDebug('No input provided', '');
+            return;
+        }
+
+        // Build the SQL query (for display)
+        const query = `SELECT * FROM users WHERE username='${user}' AND password='${pass}'`;
+
+        // Check for blocked patterns (case-sensitive)
+        const blockedPatterns = ['OR', 'AND', '--', '/*'];
+        let blocked = false;
+        let blockedPattern = '';
+
+        for (let pattern of blockedPatterns) {
+            if (user.includes(pattern) || pass.includes(pattern)) {
+                blocked = true;
+                blockedPattern = pattern;
+                break;
             }
         }
 
-        // ============================================
-        // CHALLENGE FUNCTIONS - WEB SECURITY
-        // ============================================
+        if (blocked) {
+            showSQLResult('danger', `❌ Security Filter Triggered!<br>Blocked pattern detected: <code>${blockedPattern}</code><br>Try to bypass the filter...`);
+            updateDebug(query, 'BLOCKED');
+            return;
+        }
 
-        let sqlAttemptCount = 0;
-        const MAX_SQL_ATTEMPTS = 10;
+        // Check for successful injection patterns
+        const successPatterns = [
+            /admin'.*or.*'1'='1'/i,
+            /admin'.*\|\|.*1=1/i,
+            /admin'.*or.*1=1/i,
+            /admin'.*union/i
+        ];
 
-        function attemptSQLLogin() {
-            if (sqlAttemptCount >= MAX_SQL_ATTEMPTS) {
-                showSQLResult('danger', '❌ Maximum attempts reached! Refresh to try again.');
-                return;
-            }
-            
-            sqlAttemptCount++;
-            document.getElementById('sqlAttempts').textContent = sqlAttemptCount;
-            
-            const user = document.getElementById('sqlUser').value;
-            const pass = document.getElementById('sqlPass').value;
-            const resultPanel = document.getElementById('sqlResult');
-            const debugPanel = document.getElementById('sqlDebug');
-            
-            if (!user || !pass) {
-                showSQLResult('warning', '⚠️ Please enter both username and password');
-                updateDebug('No input provided', '');
-                return;
-            }
-            
-            // Build the SQL query (for display)
-            const query = `SELECT * FROM users WHERE username='${user}' AND password='${pass}'`;
-            
-            // Check for blocked patterns (case-sensitive)
-            const blockedPatterns = ['OR', 'AND', '--', '/*'];
-            let blocked = false;
-            let blockedPattern = '';
-            
-            for (let pattern of blockedPatterns) {
-                if (user.includes(pattern) || pass.includes(pattern)) {
-                    blocked = true;
-                    blockedPattern = pattern;
+        let successful = false;
+        for (let pattern of successPatterns) {
+            if (user.toLowerCase().match(pattern)) {
+                // Check if it uses comment to close the query
+                if (user.includes('#') || user.includes(';')) {
+                    successful = true;
                     break;
                 }
             }
-            
-            if (blocked) {
-                showSQLResult('danger', `❌ Security Filter Triggered!<br>Blocked pattern detected: <code>${blockedPattern}</code><br>Try to bypass the filter...`);
-                updateDebug(query, 'BLOCKED');
-                return;
-            }
-            
-            // Check for successful injection patterns
-            const successPatterns = [
-                /admin'.*or.*'1'='1'/i,
-                /admin'.*\|\|.*1=1/i,
-                /admin'.*or.*1=1/i,
-                /admin'.*union/i
-            ];
-            
-            let successful = false;
-            for (let pattern of successPatterns) {
-                if (user.toLowerCase().match(pattern)) {
-                    // Check if it uses comment to close the query
-                    if (user.includes('#') || user.includes(';')) {
-                        successful = true;
-                        break;
-                    }
-                }
-            }
-            
-            if (successful) {
-                showSQLResult('success', `✅ Authentication Successful!<br><br>
+        }
+
+        if (successful) {
+            showSQLResult('success', `✅ Authentication Successful!<br><br>
                     <div style="margin-top: 1rem; padding: 1rem; background: rgba(0,255,136,0.1); border-radius: 8px;">
                         <strong>Access Level: ADMINISTRATOR</strong><br>
                         User ID: 1<br>
@@ -2710,50 +2731,50 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                         Role: superadmin<br><br>
                         🎉 Flag: <code style="color: var(--success); font-size: 1.1rem;">secXplore{sql_1nj3ct10n_byp4ss_adm1n}</code>
                     </div>`);
-                updateDebug(query, 'SUCCESS', 'Query returned 1 row(s)<br>Admin access granted!');
-            } else if (user.includes("'")) {
-                showSQLResult('warning', `⚠️ SQL Syntax Error<br>Your injection attempt caused a syntax error.<br>Check the debug panel for details.`);
-                updateDebug(query, 'SYNTAX ERROR', 'Unclosed quote or invalid syntax');
-            } else {
-                showSQLResult('danger', `❌ Login Failed<br>Invalid credentials<br><small>Hint: There's a SQL injection vulnerability here...</small>`);
-                updateDebug(query, 'FAILED', 'Query returned 0 row(s)');
-            }
+            updateDebug(query, 'SUCCESS', 'Query returned 1 row(s)<br>Admin access granted!');
+        } else if (user.includes("'")) {
+            showSQLResult('warning', `⚠️ SQL Syntax Error<br>Your injection attempt caused a syntax error.<br>Check the debug panel for details.`);
+            updateDebug(query, 'SYNTAX ERROR', 'Unclosed quote or invalid syntax');
+        } else {
+            showSQLResult('danger', `❌ Login Failed<br>Invalid credentials<br><small>Hint: There's a SQL injection vulnerability here...</small>`);
+            updateDebug(query, 'FAILED', 'Query returned 0 row(s)');
         }
+    }
 
-        function showSQLResult(type, message) {
-            const resultPanel = document.getElementById('sqlResult');
-            const colors = {
-                success: 'rgba(0, 255, 136, 0.2)',
-                danger: 'rgba(255, 0, 102, 0.2)',
-                warning: 'rgba(255, 170, 0, 0.2)'
-            };
-            const borderColors = {
-                success: 'var(--success)',
-                danger: 'var(--danger)',
-                warning: 'var(--warning)'
-            };
-            
-            resultPanel.style.background = colors[type];
-            resultPanel.style.border = `2px solid ${borderColors[type]}`;
-            resultPanel.innerHTML = message;
-            
-            // Animate
-            resultPanel.style.animation = 'none';
-            setTimeout(() => {
-                resultPanel.style.animation = 'slideIn 0.3s ease';
-            }, 10);
-        }
+    function showSQLResult(type, message) {
+        const resultPanel = document.getElementById('sqlResult');
+        const colors = {
+            success: 'rgba(0, 255, 136, 0.2)',
+            danger: 'rgba(255, 0, 102, 0.2)',
+            warning: 'rgba(255, 170, 0, 0.2)'
+        };
+        const borderColors = {
+            success: 'var(--success)',
+            danger: 'var(--danger)',
+            warning: 'var(--warning)'
+        };
 
-        function updateDebug(query, status, details = '') {
-            const debugPanel = document.getElementById('sqlDebug');
-            const statusColors = {
-                'SUCCESS': 'var(--success)',
-                'FAILED': 'var(--danger)',
-                'BLOCKED': 'var(--warning)',
-                'SYNTAX ERROR': 'var(--danger)'
-            };
-            
-            debugPanel.innerHTML = `
+        resultPanel.style.background = colors[type];
+        resultPanel.style.border = `2px solid ${borderColors[type]}`;
+        resultPanel.innerHTML = message;
+
+        // Animate
+        resultPanel.style.animation = 'none';
+        setTimeout(() => {
+            resultPanel.style.animation = 'slideIn 0.3s ease';
+        }, 10);
+    }
+
+    function updateDebug(query, status, details = '') {
+        const debugPanel = document.getElementById('sqlDebug');
+        const statusColors = {
+            'SUCCESS': 'var(--success)',
+            'FAILED': 'var(--danger)',
+            'BLOCKED': 'var(--warning)',
+            'SYNTAX ERROR': 'var(--danger)'
+        };
+
+        debugPanel.innerHTML = `
                 <div style="margin-bottom: 1rem;">
                     <strong style="color: var(--secondary);">Query Executed:</strong><br>
                     <code style="color: var(--light); word-break: break-all;">${query}</code>
@@ -2764,23 +2785,23 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                 </div>
                 ${details ? `<div><strong style="color: var(--secondary);">Details:</strong><br>${details}</div>` : ''}
             `
-        };
+    };
 
-        function executeCMD() {
-            const input = document.getElementById('cmdInput').value;
-            const result = document.getElementById('cmdResult');
-            
-            if (!input) {
-                result.innerHTML = `<span style="color: var(--warning);">⚠️ Please enter a target IP</span>`;
-                return;
-            }
+    function executeCMD() {
+        const input = document.getElementById('cmdInput').value;
+        const result = document.getElementById('cmdResult');
 
-            if (input.includes(';') || input.includes('&&') || input.includes('||') || input.includes('|')) {
-                const parts = input.split(/[;&|]+/);
-                const commands = parts.slice(1).join(' ').toLowerCase();
-                
-                if (commands.includes('ls') || commands.includes('dir')) {
-                    result.innerHTML = `<span style="color: var(--light);">Pinging ${parts[0]}...
+        if (!input) {
+            result.innerHTML = `<span style="color: var(--warning);">⚠️ Please enter a target IP</span>`;
+            return;
+        }
+
+        if (input.includes(';') || input.includes('&&') || input.includes('||') || input.includes('|')) {
+            const parts = input.split(/[;&|]+/);
+            const commands = parts.slice(1).join(' ').toLowerCase();
+
+            if (commands.includes('ls') || commands.includes('dir')) {
+                result.innerHTML = `<span style="color: var(--light);">Pinging ${parts[0]}...
         PING ${parts[0]} (${parts[0]}) 56(84) bytes of data.
         64 bytes from ${parts[0]}: icmp_seq=1 ttl=64 time=0.042 ms
 
@@ -2796,8 +2817,8 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         flag.txt
 
         Hint: Try reading flag.txt with 'cat' command!</span>`;
-                } else if (commands.includes('cat') && commands.includes('flag')) {
-                    result.innerHTML = `<span style="color: var(--success);">Pinging ${parts[0]}...
+            } else if (commands.includes('cat') && commands.includes('flag')) {
+                result.innerHTML = `<span style="color: var(--success);">Pinging ${parts[0]}...
         PING ${parts[0]} (${parts[0]}) 56(84) bytes of data.
         64 bytes from ${parts[0]}: icmp_seq=1 ttl=64 time=0.038 ms
 
@@ -2807,130 +2828,130 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         secXplore{c0mm4nd_1nj3ct10n_pwn3d}
 
         Copy the flag and submit below!</span>`;
-                } else {
-                    result.innerHTML = `<span style="color: var(--secondary);">Pinging ${parts[0]}...
+            } else {
+                result.innerHTML = `<span style="color: var(--secondary);">Pinging ${parts[0]}...
         PING ${parts[0]} (${parts[0]}) 56(84) bytes of data.
         64 bytes from ${parts[0]}: icmp_seq=1 ttl=64 time=0.045 ms
 
         Executing: ${commands}
         Command executed but no relevant output.</span>`;
-                }
-            } else {
-                result.innerHTML = `<span style="color: var(--light);">Pinging ${input}...
+            }
+        } else {
+            result.innerHTML = `<span style="color: var(--light);">Pinging ${input}...
         PING ${input} (${input}) 56(84) bytes of data.
         64 bytes from ${input}: icmp_seq=1 ttl=64 time=0.042 ms
 
         --- ${input} ping statistics ---
         1 packets transmitted, 1 received, 0% packet loss, time 0ms
         rtt min/avg/max/mdev = 0.042/0.042/0.042/0.000 ms</span>`;
-            }
+        }
+    }
+
+    function submitXSS() {
+        const input = document.getElementById('xssInput').value;
+        const result = document.getElementById('xssResult');
+        const preview = document.getElementById('xssPreview');
+
+        if (!input) {
+            result.innerHTML = `<span style="color: var(--warning);">⚠️ Please enter a comment</span>`;
+            return;
         }
 
-        function submitXSS() {
-            const input = document.getElementById('xssInput').value;
-            const result = document.getElementById('xssResult');
-            const preview = document.getElementById('xssPreview');
-            
-            if (!input) {
-                result.innerHTML = `<span style="color: var(--warning);">⚠️ Please enter a comment</span>`;
-                return;
-            }
+        if (input.toLowerCase().includes('<script') || input.toLowerCase().includes('onerror') || input.toLowerCase().includes('onclick')) {
+            result.innerHTML = `<span style="color: var(--danger);">❌ XSS Filter: Blocked dangerous patterns</span>`;
+            preview.innerHTML = '';
+            return;
+        }
 
-            if (input.toLowerCase().includes('<script') || input.toLowerCase().includes('onerror') || input.toLowerCase().includes('onclick')) {
-                result.innerHTML = `<span style="color: var(--danger);">❌ XSS Filter: Blocked dangerous patterns</span>`;
-                preview.innerHTML = '';
-                return;
-            }
-
-            if (input.includes('<svg') || input.includes('<img') || input.includes('<iframe') || input.includes('onload')) {
-                result.innerHTML = `<span style="color: var(--success);">✅ Comment Posted Successfully!
+        if (input.includes('<svg') || input.includes('<img') || input.includes('<iframe') || input.includes('onload')) {
+            result.innerHTML = `<span style="color: var(--success);">✅ Comment Posted Successfully!
 
         XSS Payload Executed!
         Admin Cookie Stolen: admin_session=secXplore{xss_c00k13_st34l3r_pwn}
 
         Copy the flag and submit below!</span>`;
-                preview.innerHTML = `<div style="color: var(--success);">Comment Preview: ${input.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`;
-            } else {
-                result.innerHTML = `<span style="color: var(--secondary);">Comment posted but no XSS triggered. Try different payloads!</span>`;
-                preview.innerHTML = `<div>Comment Preview: ${input.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`;
-            }
+            preview.innerHTML = `<div style="color: var(--success);">Comment Preview: ${input.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`;
+        } else {
+            result.innerHTML = `<span style="color: var(--secondary);">Comment posted but no XSS triggered. Try different payloads!</span>`;
+            preview.innerHTML = `<div>Comment Preview: ${input.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`;
+        }
+    }
+
+    function verifyJWT() {
+        const token = document.getElementById('jwtInput').value.trim();
+        const result = document.getElementById('jwtResult');
+
+        if (!token) {
+            result.innerHTML = `<span style="color: var(--warning);">⚠️ Please enter a JWT token</span>`;
+            return;
         }
 
-        function verifyJWT() {
-            const token = document.getElementById('jwtInput').value.trim();
-            const result = document.getElementById('jwtResult');
-            
-            if (!token) {
-                result.innerHTML = `<span style="color: var(--warning);">⚠️ Please enter a JWT token</span>`;
+        try {
+            const parts = token.split('.');
+            if (parts.length !== 3) {
+                result.innerHTML = `<span style="color: var(--danger);">❌ Invalid JWT format</span>`;
                 return;
             }
 
-            try {
-                const parts = token.split('.');
-                if (parts.length !== 3) {
-                    result.innerHTML = `<span style="color: var(--danger);">❌ Invalid JWT format</span>`;
-                    return;
-                }
+            const header = JSON.parse(atob(parts[0]));
+            const payload = JSON.parse(atob(parts[1]));
 
-                const header = JSON.parse(atob(parts[0]));
-                const payload = JSON.parse(atob(parts[1]));
-
-                if (header.alg === 'HS256' && payload.role === 'admin') {
-                    result.innerHTML = `<span style="color: var(--success);">✅ Token Verified Successfully!
+            if (header.alg === 'HS256' && payload.role === 'admin') {
+                result.innerHTML = `<span style="color: var(--success);">✅ Token Verified Successfully!
 
         Access Level: ADMIN
         Algorithm: HS256
         Flag: secXplore{jwt_alg0r1thm_c0nfus10n_h4ck}
 
         You successfully exploited the algorithm confusion vulnerability!</span>`;
-                } else if (payload.role === 'admin') {
-                    result.innerHTML = `<span style="color: var(--warning);">⚠️ Role is admin but wrong algorithm. Try HS256!</span>`;
-                } else {
-                    result.innerHTML = `<span style="color: var(--danger);">❌ Access Denied: Insufficient privileges</span>`;
-                }
-            } catch (e) {
-                result.innerHTML = `<span style="color: var(--danger);">❌ Token decoding error</span>`;
+            } else if (payload.role === 'admin') {
+                result.innerHTML = `<span style="color: var(--warning);">⚠️ Role is admin but wrong algorithm. Try HS256!</span>`;
+            } else {
+                result.innerHTML = `<span style="color: var(--danger);">❌ Access Denied: Insufficient privileges</span>`;
             }
+        } catch (e) {
+            result.innerHTML = `<span style="color: var(--danger);">❌ Token decoding error</span>`;
         }
+    }
 
-        function decodeJWT() {
-            document.getElementById('toolOutput').innerHTML = `Original Token Decoded:
+    function decodeJWT() {
+        document.getElementById('toolOutput').innerHTML = `Original Token Decoded:
         Header: {"alg":"RS256","typ":"JWT"}
         Payload: {"user":"user","role":"user","iat":1633024800}
 
         To become admin, change "role":"user" to "role":"admin"`;
-        }
+    }
 
-        function showPublicKey() {
-            document.getElementById('toolOutput').innerHTML = `Public Key (PEM):
+    function showPublicKey() {
+        document.getElementById('toolOutput').innerHTML = `Public Key (PEM):
         -----BEGIN PUBLIC KEY-----
         MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
         -----END PUBLIC KEY-----
 
         Hint: Use this as HMAC secret for HS256!`;
-        }
+    }
 
-        function createHS256() {
-            document.getElementById('toolOutput').innerHTML = `Sample HS256 Token with admin role:
+    function createHS256() {
+        document.getElementById('toolOutput').innerHTML = `Sample HS256 Token with admin role:
         eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoidXNlciIsInJvbGUiOiJhZG1pbiIsImlhdCI6MTYzMzAyNDgwMH0.signature
 
         Try pasting this in the verify box!`;
-        }
+    }
 
-        // ============================================
-        // UTILITY FUNCTIONS
-        // ============================================
-        function copyToClipboard(text) {
-            navigator.clipboard.writeText(text.trim()).then(() => {
-                showNotification('Copied to clipboard!', 'success');
-            });
-        }
+    // ============================================
+    // UTILITY FUNCTIONS
+    // ============================================
+    function copyToClipboard(text) {
+        navigator.clipboard.writeText(text.trim()).then(() => {
+            showNotification('Copied to clipboard!', 'success');
+        });
+    }
 
-        function showNotification(message, type = 'info') {
-            const notification = document.createElement('div');
-            notification.className = `notification notification-${type}`;
-            notification.textContent = message;
-            notification.style.cssText = `
+    function showNotification(message, type = 'info') {
+        const notification = document.createElement('div');
+        notification.className = `notification notification-${type}`;
+        notification.textContent = message;
+        notification.style.cssText = `
                 position: fixed;
                 top: 100px;
                 right: 20px;
@@ -2942,352 +2963,352 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                 z-index: 10000;
                 animation: slideIn 0.3s ease;
             `;
-            document.body.appendChild(notification);
-            setTimeout(() => notification.remove(), 2000);
+        document.body.appendChild(notification);
+        setTimeout(() => notification.remove(), 2000);
+    }
+
+    // ============================================
+    // CRYPTO 1 FUNCTIONS
+    // ============================================
+    function processMultiStep1() {
+        const input = document.getElementById('multiStep1Input').value.trim();
+        const output = document.getElementById('multiStep1Output');
+
+        if (!input) {
+            output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ ciphertext ก่อน</span>';
+            return;
         }
 
-        // ============================================
-        // CRYPTO 1 FUNCTIONS
-        // ============================================
-        function processMultiStep1() {
-            const input = document.getElementById('multiStep1Input').value.trim();
-            const output = document.getElementById('multiStep1Output');
-            
-            if (!input) {
-                output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ ciphertext ก่อน</span>';
-                return;
-            }
-            
-            try {
-                const decoded = atob(input);
-                output.innerHTML = `<strong style="color: var(--success);">✓ Decoded:</strong>\n<div class="result-box" onclick="copyToClipboard(this.textContent)">${decoded}</div>\n<small style="color: var(--gray);">คลิกเพื่อคัดลอก → ไปใส่ใน Step 2</small>`;
-            } catch (e) {
-                output.innerHTML = `<span style="color: var(--danger);">✗ Invalid Base64</span>`;
-            }
+        try {
+            const decoded = atob(input);
+            output.innerHTML = `<strong style="color: var(--success);">✓ Decoded:</strong>\n<div class="result-box" onclick="copyToClipboard(this.textContent)">${decoded}</div>\n<small style="color: var(--gray);">คลิกเพื่อคัดลอก → ไปใส่ใน Step 2</small>`;
+        } catch (e) {
+            output.innerHTML = `<span style="color: var(--danger);">✗ Invalid Base64</span>`;
+        }
+    }
+
+    function processMultiStep2() {
+        const input = document.getElementById('multiStep2Input').value.trim();
+        const output = document.getElementById('multiStep2Output');
+
+        if (!input) {
+            output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ตัวเลขจาก Step 1</span>';
+            return;
         }
 
-        function processMultiStep2() {
-            const input = document.getElementById('multiStep2Input').value.trim();
-            const output = document.getElementById('multiStep2Output');
-            
-            if (!input) {
-                output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ตัวเลขจาก Step 1</span>';
-                return;
+        try {
+            const numbers = input.split(',').map(n => parseInt(n.trim()));
+            let text = '';
+            for (let num of numbers) {
+                if (!isNaN(num)) text += String.fromCharCode(num);
             }
-            
-            try {
-                const numbers = input.split(',').map(n => parseInt(n.trim()));
-                let text = '';
-                for (let num of numbers) {
-                    if (!isNaN(num)) text += String.fromCharCode(num);
-                }
-                output.innerHTML = `<strong style="color: var(--success);">✓ Converted:</strong>\n<div class="result-box" onclick="copyToClipboard(this.textContent)">${text}</div>\n<small style="color: var(--gray);">คลิกเพื่อคัดลอก → ไปใส่ใน Step 3</small>`;
-            } catch (e) {
-                output.innerHTML = `<span style="color: var(--danger);">✗ Invalid format</span>`;
-            }
+            output.innerHTML = `<strong style="color: var(--success);">✓ Converted:</strong>\n<div class="result-box" onclick="copyToClipboard(this.textContent)">${text}</div>\n<small style="color: var(--gray);">คลิกเพื่อคัดลอก → ไปใส่ใน Step 3</small>`;
+        } catch (e) {
+            output.innerHTML = `<span style="color: var(--danger);">✗ Invalid format</span>`;
+        }
+    }
+
+    function processMultiStep3() {
+        const input = document.getElementById('multiStep3Input').value.trim();
+        const key = parseInt(document.getElementById('multiXorKey').value);
+        const output = document.getElementById('multiStep3Output');
+
+        if (!input || !key) {
+            output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ text และ XOR key</span>';
+            return;
         }
 
-        function processMultiStep3() {
-            const input = document.getElementById('multiStep3Input').value.trim();
-            const key = parseInt(document.getElementById('multiXorKey').value);
-            const output = document.getElementById('multiStep3Output');
-            
-            if (!input || !key) {
-                output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ text และ XOR key</span>';
-                return;
-            }
-            
-            let result = '';
-            for (let c of input) {
-                result += String.fromCharCode(c.charCodeAt(0) ^ key);
-            }
-            
-            output.innerHTML = `<strong style="color: var(--success);">✓ XOR Result (key=${key}):</strong>\n<div class="result-box" onclick="copyToClipboard(this.textContent)">${result}</div>\n<small style="color: var(--gray);">คลิกเพื่อคัดลอก → ไปใส่ใน Step 4</small>`;
+        let result = '';
+        for (let c of input) {
+            result += String.fromCharCode(c.charCodeAt(0) ^ key);
         }
 
-        function processMultiStep4() {
-            const input = document.getElementById('multiStep4Input').value.trim();
-            const shift = parseInt(document.getElementById('multiCaesarShift').value);
-            const output = document.getElementById('multiStep4Output');
-            
-            if (!input || isNaN(shift)) {
-                output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ text และ shift value</span>';
-                return;
-            }
-            
-            let result = '';
-            for (let c of input) {
-                if (c.match(/[a-z]/i)) {
-                    const base = c <= 'Z' ? 65 : 97;
-                    result += String.fromCharCode(((c.charCodeAt(0) - base - shift + 26) % 26) + base);
-                } else {
-                    result += c;
-                }
-            }
-            
-            output.innerHTML = `<strong style="color: var(--success);">✓ Caesar Result (shift=${shift}):</strong>\n<div class="result-box" onclick="copyToClipboard(this.textContent)">${result}</div>\n${result.includes('secXplore{') ? '<strong style="color: var(--success); font-size: 1.2em;">🎉 FLAG FOUND!</strong>' : ''}`;
+        output.innerHTML = `<strong style="color: var(--success);">✓ XOR Result (key=${key}):</strong>\n<div class="result-box" onclick="copyToClipboard(this.textContent)">${result}</div>\n<small style="color: var(--gray);">คลิกเพื่อคัดลอก → ไปใส่ใน Step 4</small>`;
+    }
+
+    function processMultiStep4() {
+        const input = document.getElementById('multiStep4Input').value.trim();
+        const shift = parseInt(document.getElementById('multiCaesarShift').value);
+        const output = document.getElementById('multiStep4Output');
+
+        if (!input || isNaN(shift)) {
+            output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ text และ shift value</span>';
+            return;
         }
 
-        // ============================================
-        // CRYPTO 2 FUNCTIONS
-        // ============================================
-        function calculateXor() {
-            const hex1 = document.getElementById('xorHex1').value.trim();
-            const hex2 = document.getElementById('xorHex2').value.trim();
-            const output = document.getElementById('xorResult');
-            
-            if (!hex1 || !hex2) {
-                output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ hex ทั้ง 2 ช่อง</span>';
-                return;
-            }
-            
-            const val1 = parseInt(hex1, 16);
-            const val2 = parseInt(hex2, 16);
-            const result = val1 ^ val2;
-            const resultHex = result.toString(16).padStart(2, '0');
-            const resultChar = result >= 32 && result < 127 ? String.fromCharCode(result) : '';
-            
-            output.innerHTML = `<strong style="color: var(--success);">Result:</strong> 0x${resultHex} = ${result} ${resultChar ? `= '${resultChar}'` : ''}`;
-        }
-
-        function decryptWithXorKey() {
-            const key = document.getElementById('xorDecryptKey').value.trim();
-            const output = document.getElementById('xorDecryptOutput');
-            const cipher = "1a0b455e332f5c0c1a13445a3722510b1b0a445b372f5c0d1a13445e372e510a1a0b455b332f5c0c1a13445a3722510b1b0a";
-            
-            if (!key || key.length !== 8) {
-                output.innerHTML = '<span style="color: var(--warning);">⚠️ Key ต้องเป็น 8 hex chars</span>';
-                return;
-            }
-            
-            try {
-                const keyBytes = [];
-                for (let i = 0; i < 8; i += 2) {
-                    keyBytes.push(parseInt(key.substr(i, 2), 16));
-                }
-                
-                let result = '';
-                for (let i = 0; i < cipher.length; i += 2) {
-                    const cByte = parseInt(cipher.substr(i, 2), 16);
-                    const kByte = keyBytes[(i/2) % 4];
-                    result += String.fromCharCode(cByte ^ kByte);
-                }
-                
-                output.innerHTML = `<strong style="color: var(--success);">✓ Decrypted:</strong>\n<div class="result-box">${result}</div>\n${result.includes('secXplore{') ? '<strong style="color: var(--success); font-size: 1.2em;">🎉 FLAG FOUND!</strong>' : '<span style="color: var(--danger);">Key ไม่ถูกต้อง ลองใหม่</span>'}`;
-            } catch (e) {
-                output.innerHTML = `<span style="color: var(--danger);">✗ Error: ${e.message}</span>`;
-            }
-        }
-
-        // ============================================
-        // CRYPTO 3 FUNCTIONS
-        // ============================================
-        function testPrimeFactor() {
-            const prime = parseInt(document.getElementById('primeDivisor').value);
-            const output = document.getElementById('primeResult');
-            const n = 15043;
-            
-            if (!prime) {
-                output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ตัวเลข</span>';
-                return;
-            }
-            
-            const remainder = n % prime;
-            if (remainder === 0) {
-                const quotient = n / prime;
-                output.innerHTML = `<strong style="color: var(--success);">✓ FOUND!</strong>\n${n} ÷ ${prime} = ${quotient}\n\n${n} = ${prime} × ${quotient}`;
+        let result = '';
+        for (let c of input) {
+            if (c.match(/[a-z]/i)) {
+                const base = c <= 'Z' ? 65 : 97;
+                result += String.fromCharCode(((c.charCodeAt(0) - base - shift + 26) % 26) + base);
             } else {
-                output.innerHTML = `<span style="color: var(--danger);">✗ ${n} % ${prime} = ${remainder}</span>\nไม่หารลงตัว ลองตัวอื่น`;
+                result += c;
             }
         }
 
-        function calculateRsaPrivateKey() {
-            const p = parseInt(document.getElementById('rsaP').value);
-            const q = parseInt(document.getElementById('rsaQ').value);
-            const output = document.getElementById('rsaCalcOutput');
-            const e = 3;
-            
-            if (!p || !q) {
-                output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ p และ q จาก Step 1</span>';
-                return;
-            }
-            
-            if (p * q !== 15043) {
-                output.innerHTML = `<span style="color: var(--danger);">✗ p × q = ${p * q} ≠ 15043</span>\nลองใหม่`;
-                return;
-            }
-            
-            const phi = (p - 1) * (q - 1);
-            const d = modInverse(e, phi);
-            
-            output.innerHTML = `<strong style="color: var(--success);">✓ Calculation:</strong>\n\nφ(n) = (${p}-1) × (${q}-1) = ${phi}\n\nPrivate key: d = ${d}\n\n<span style="color: var(--secondary);">ใส่ d นี้ใน Step 3</span>`;
+        output.innerHTML = `<strong style="color: var(--success);">✓ Caesar Result (shift=${shift}):</strong>\n<div class="result-box" onclick="copyToClipboard(this.textContent)">${result}</div>\n${result.includes('secXplore{') ? '<strong style="color: var(--success); font-size: 1.2em;">🎉 FLAG FOUND!</strong>' : ''}`;
+    }
+
+    // ============================================
+    // CRYPTO 2 FUNCTIONS
+    // ============================================
+    function calculateXor() {
+        const hex1 = document.getElementById('xorHex1').value.trim();
+        const hex2 = document.getElementById('xorHex2').value.trim();
+        const output = document.getElementById('xorResult');
+
+        if (!hex1 || !hex2) {
+            output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ hex ทั้ง 2 ช่อง</span>';
+            return;
         }
 
-        function decryptRsaMessage() {
-            const d = parseInt(document.getElementById('rsaPrivateD').value);
-            const output = document.getElementById('rsaDecryptOutput');
-            const n = 15043;
-            const cipher = [6837,5451,1728,11552,9261,8000,5451,12167,5451,2744,1331,6837,2197,9261,1728,11552,9261,8000,11552,216];
-            
-            if (!d) {
-                output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ d จาก Step 2</span>';
-                return;
+        const val1 = parseInt(hex1, 16);
+        const val2 = parseInt(hex2, 16);
+        const result = val1 ^ val2;
+        const resultHex = result.toString(16).padStart(2, '0');
+        const resultChar = result >= 32 && result < 127 ? String.fromCharCode(result) : '';
+
+        output.innerHTML = `<strong style="color: var(--success);">Result:</strong> 0x${resultHex} = ${result} ${resultChar ? `= '${resultChar}'` : ''}`;
+    }
+
+    function decryptWithXorKey() {
+        const key = document.getElementById('xorDecryptKey').value.trim();
+        const output = document.getElementById('xorDecryptOutput');
+        const cipher = "1a0b455e332f5c0c1a13445a3722510b1b0a445b372f5c0d1a13445e372e510a1a0b455b332f5c0c1a13445a3722510b1b0a";
+
+        if (!key || key.length !== 8) {
+            output.innerHTML = '<span style="color: var(--warning);">⚠️ Key ต้องเป็น 8 hex chars</span>';
+            return;
+        }
+
+        try {
+            const keyBytes = [];
+            for (let i = 0; i < 8; i += 2) {
+                keyBytes.push(parseInt(key.substr(i, 2), 16));
             }
-            
+
             let result = '';
-            for (let c of cipher) {
-                result += String.fromCharCode(modPow(c, d, n));
+            for (let i = 0; i < cipher.length; i += 2) {
+                const cByte = parseInt(cipher.substr(i, 2), 16);
+                const kByte = keyBytes[(i / 2) % 4];
+                result += String.fromCharCode(cByte ^ kByte);
             }
-            
-            output.innerHTML = `<strong style="color: var(--success);">✓ Decrypted:</strong>\n<div class="result-box">${result}</div>\n${result.includes('secXplore{') ? '<strong style="color: var(--success); font-size: 1.2em;">🎉 FLAG FOUND!</strong>' : '<span style="color: var(--danger);">d ไม่ถูกต้อง</span>'}`;
+
+            output.innerHTML = `<strong style="color: var(--success);">✓ Decrypted:</strong>\n<div class="result-box">${result}</div>\n${result.includes('secXplore{') ? '<strong style="color: var(--success); font-size: 1.2em;">🎉 FLAG FOUND!</strong>' : '<span style="color: var(--danger);">Key ไม่ถูกต้อง ลองใหม่</span>'}`;
+        } catch (e) {
+            output.innerHTML = `<span style="color: var(--danger);">✗ Error: ${e.message}</span>`;
+        }
+    }
+
+    // ============================================
+    // CRYPTO 3 FUNCTIONS
+    // ============================================
+    function testPrimeFactor() {
+        const prime = parseInt(document.getElementById('primeDivisor').value);
+        const output = document.getElementById('primeResult');
+        const n = 15043;
+
+        if (!prime) {
+            output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ตัวเลข</span>';
+            return;
         }
 
-        function modPow(base, exp, mod) {
-            let result = 1;
-            base = base % mod;
-            while (exp > 0) {
-                if (exp % 2 === 1) result = (result * base) % mod;
-                exp = Math.floor(exp / 2);
-                base = (base * base) % mod;
-            }
-            return result;
+        const remainder = n % prime;
+        if (remainder === 0) {
+            const quotient = n / prime;
+            output.innerHTML = `<strong style="color: var(--success);">✓ FOUND!</strong>\n${n} ÷ ${prime} = ${quotient}\n\n${n} = ${prime} × ${quotient}`;
+        } else {
+            output.innerHTML = `<span style="color: var(--danger);">✗ ${n} % ${prime} = ${remainder}</span>\nไม่หารลงตัว ลองตัวอื่น`;
+        }
+    }
+
+    function calculateRsaPrivateKey() {
+        const p = parseInt(document.getElementById('rsaP').value);
+        const q = parseInt(document.getElementById('rsaQ').value);
+        const output = document.getElementById('rsaCalcOutput');
+        const e = 3;
+
+        if (!p || !q) {
+            output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ p และ q จาก Step 1</span>';
+            return;
         }
 
-        function modInverse(a, m) {
-            let m0 = m, x0 = 0, x1 = 1;
-            while (a > 1) {
-                let q = Math.floor(a / m);
-                let t = m;
-                m = a % m;
-                a = t;
-                t = x0;
-                x0 = x1 - q * x0;
-                x1 = t;
-            }
-            return x1 < 0 ? x1 + m0 : x1;
+        if (p * q !== 15043) {
+            output.innerHTML = `<span style="color: var(--danger);">✗ p × q = ${p * q} ≠ 15043</span>\nลองใหม่`;
+            return;
         }
 
-        // ============================================
-        // CRYPTO 4 FUNCTIONS
-        // ============================================
-        let operationHistory = [];
+        const phi = (p - 1) * (q - 1);
+        const d = modInverse(e, phi);
 
-        function applyOperation(op) {
-            const input = document.getElementById('customLayerInput').value.trim();
-            const output = document.getElementById('customLayerOutput');
-            const history = document.getElementById('layerHistory');
-            
-            if (!input) {
-                output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ text ก่อน</span>';
-                return;
-            }
-            
-            let result = '';
-            let opName = '';
-            
-            try {
-                switch(op) {
-                    case 'base64':
-                        result = atob(input);
-                        opName = 'Base64 Decode';
-                        break;
-                    case 'rot13':
-                        for (let c of input) {
-                            if (c.match(/[a-z]/i)) {
-                                const base = c <= 'Z' ? 65 : 97;
-                                result += String.fromCharCode(((c.charCodeAt(0) - base + 13) % 26) + base);
-                            } else {
-                                result += c;
-                            }
-                        }
-                        opName = 'ROT13';
-                        break;
-                    case 'reverse':
-                        result = input.split('').reverse().join('');
-                        opName = 'Reverse';
-                        break;
-                    case 'hex':
-                        const hex = input.replace(/[^0-9A-Fa-f]/g, '');
-                        for (let i = 0; i < hex.length; i += 2) {
-                            result += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
-                        }
-                        opName = 'Hex Decode';
-                        break;
-                    case 'upper':
-                        result = input.toUpperCase();
-                        opName = 'To Uppercase';
-                        break;
-                    case 'lower':
-                        result = input.toLowerCase();
-                        opName = 'To Lowercase';
-                        break;
-                    case 'caesar':
-                        const shift = parseInt(document.getElementById('customShiftValue').value);
-                        if (isNaN(shift)) {
-                            output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ shift value</span>';
-                            return;
-                        }
-                        for (let c of input) {
-                            if (c.match(/[a-z]/i)) {
-                                const base = c <= 'Z' ? 65 : 97;
-                                result += String.fromCharCode(((c.charCodeAt(0) - base - shift + 26) % 26) + base);
-                            } else {
-                                result += c;
-                            }
-                        }
-                        opName = `Caesar (shift=${shift})`;
-                        break;
-                    case 'vigenere':
-                        const key = document.getElementById('customVigenereKey').value.trim().toLowerCase();
-                        if (!key) {
-                            output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ Vigenere key</span>';
-                            return;
-                        }
-                        let keyIndex = 0;
-                        for (let c of input) {
-                            if (c.match(/[a-z]/i)) {
-                                const base = c <= 'Z' ? 65 : 97;
-                                const keyChar = key[keyIndex % key.length];
-                                const keyShift = keyChar.charCodeAt(0) - 97;
-                                result += String.fromCharCode(((c.charCodeAt(0) - base - keyShift + 26) % 26) + base);
-                                keyIndex++;
-                            } else {
-                                result += c;
-                            }
-                        }
-                        opName = `Vigenere (key=${key})`;
-                        break;
-                }
-                
-                operationHistory.push(opName);
-                output.innerHTML = `<strong style="color: var(--success);">✓ ${opName}:</strong>\n<div class="result-box" onclick="copyToClipboard(this.textContent)">${result}</div>\n<small style="color: var(--gray);">คลิกเพื่อคัดลอก</small>\n${result.includes('secXplore{') ? '<strong style="color: var(--success); font-size: 1.2em;">🎉 FLAG FOUND!</strong>' : ''}`;
-                
-                history.innerHTML = operationHistory.map((op, i) => `${i + 1}. ${op}`).join('<br>');
-            } catch (e) {
-                output.innerHTML = `<span style="color: var(--danger);">✗ Error: ${e.message}</span>`;
-            }
+        output.innerHTML = `<strong style="color: var(--success);">✓ Calculation:</strong>\n\nφ(n) = (${p}-1) × (${q}-1) = ${phi}\n\nPrivate key: d = ${d}\n\n<span style="color: var(--secondary);">ใส่ d นี้ใน Step 3</span>`;
+    }
+
+    function decryptRsaMessage() {
+        const d = parseInt(document.getElementById('rsaPrivateD').value);
+        const output = document.getElementById('rsaDecryptOutput');
+        const n = 15043;
+        const cipher = [6837, 5451, 1728, 11552, 9261, 8000, 5451, 12167, 5451, 2744, 1331, 6837, 2197, 9261, 1728, 11552, 9261, 8000, 11552, 216];
+
+        if (!d) {
+            output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ d จาก Step 2</span>';
+            return;
         }
 
+        let result = '';
+        for (let c of cipher) {
+            result += String.fromCharCode(modPow(c, d, n));
+        }
 
-        // ============================================
-        // CHALLENGE FUNCTIONS - FORENSICS
-        // ============================================
+        output.innerHTML = `<strong style="color: var(--success);">✓ Decrypted:</strong>\n<div class="result-box">${result}</div>\n${result.includes('secXplore{') ? '<strong style="color: var(--success); font-size: 1.2em;">🎉 FLAG FOUND!</strong>' : '<span style="color: var(--danger);">d ไม่ถูกต้อง</span>'}`;
+    }
 
-        // EXIF Command Executor
-        function executeStegoCommand() {
-            const input = document.getElementById('stegoCommand');
-            const command = input.value.trim();
-            const terminal = document.getElementById('stegoTerminal');
-            
-            if (!command) return;
-            
-            // แสดงคำสั่งที่พิมพ์พร้อม prompt
-            terminal.innerHTML += `\n$ ${command}`;
-            
-            const cmd = command.toLowerCase();
-            
-            if (cmd.includes('binwalk') && !cmd.includes('-e')) {
-                terminal.innerHTML += `
+    function modPow(base, exp, mod) {
+        let result = 1;
+        base = base % mod;
+        while (exp > 0) {
+            if (exp % 2 === 1) result = (result * base) % mod;
+            exp = Math.floor(exp / 2);
+            base = (base * base) % mod;
+        }
+        return result;
+    }
+
+    function modInverse(a, m) {
+        let m0 = m, x0 = 0, x1 = 1;
+        while (a > 1) {
+            let q = Math.floor(a / m);
+            let t = m;
+            m = a % m;
+            a = t;
+            t = x0;
+            x0 = x1 - q * x0;
+            x1 = t;
+        }
+        return x1 < 0 ? x1 + m0 : x1;
+    }
+
+    // ============================================
+    // CRYPTO 4 FUNCTIONS
+    // ============================================
+    let operationHistory = [];
+
+    function applyOperation(op) {
+        const input = document.getElementById('customLayerInput').value.trim();
+        const output = document.getElementById('customLayerOutput');
+        const history = document.getElementById('layerHistory');
+
+        if (!input) {
+            output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ text ก่อน</span>';
+            return;
+        }
+
+        let result = '';
+        let opName = '';
+
+        try {
+            switch (op) {
+                case 'base64':
+                    result = atob(input);
+                    opName = 'Base64 Decode';
+                    break;
+                case 'rot13':
+                    for (let c of input) {
+                        if (c.match(/[a-z]/i)) {
+                            const base = c <= 'Z' ? 65 : 97;
+                            result += String.fromCharCode(((c.charCodeAt(0) - base + 13) % 26) + base);
+                        } else {
+                            result += c;
+                        }
+                    }
+                    opName = 'ROT13';
+                    break;
+                case 'reverse':
+                    result = input.split('').reverse().join('');
+                    opName = 'Reverse';
+                    break;
+                case 'hex':
+                    const hex = input.replace(/[^0-9A-Fa-f]/g, '');
+                    for (let i = 0; i < hex.length; i += 2) {
+                        result += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
+                    }
+                    opName = 'Hex Decode';
+                    break;
+                case 'upper':
+                    result = input.toUpperCase();
+                    opName = 'To Uppercase';
+                    break;
+                case 'lower':
+                    result = input.toLowerCase();
+                    opName = 'To Lowercase';
+                    break;
+                case 'caesar':
+                    const shift = parseInt(document.getElementById('customShiftValue').value);
+                    if (isNaN(shift)) {
+                        output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ shift value</span>';
+                        return;
+                    }
+                    for (let c of input) {
+                        if (c.match(/[a-z]/i)) {
+                            const base = c <= 'Z' ? 65 : 97;
+                            result += String.fromCharCode(((c.charCodeAt(0) - base - shift + 26) % 26) + base);
+                        } else {
+                            result += c;
+                        }
+                    }
+                    opName = `Caesar (shift=${shift})`;
+                    break;
+                case 'vigenere':
+                    const key = document.getElementById('customVigenereKey').value.trim().toLowerCase();
+                    if (!key) {
+                        output.innerHTML = '<span style="color: var(--warning);">⚠️ ใส่ Vigenere key</span>';
+                        return;
+                    }
+                    let keyIndex = 0;
+                    for (let c of input) {
+                        if (c.match(/[a-z]/i)) {
+                            const base = c <= 'Z' ? 65 : 97;
+                            const keyChar = key[keyIndex % key.length];
+                            const keyShift = keyChar.charCodeAt(0) - 97;
+                            result += String.fromCharCode(((c.charCodeAt(0) - base - keyShift + 26) % 26) + base);
+                            keyIndex++;
+                        } else {
+                            result += c;
+                        }
+                    }
+                    opName = `Vigenere (key=${key})`;
+                    break;
+            }
+
+            operationHistory.push(opName);
+            output.innerHTML = `<strong style="color: var(--success);">✓ ${opName}:</strong>\n<div class="result-box" onclick="copyToClipboard(this.textContent)">${result}</div>\n<small style="color: var(--gray);">คลิกเพื่อคัดลอก</small>\n${result.includes('secXplore{') ? '<strong style="color: var(--success); font-size: 1.2em;">🎉 FLAG FOUND!</strong>' : ''}`;
+
+            history.innerHTML = operationHistory.map((op, i) => `${i + 1}. ${op}`).join('<br>');
+        } catch (e) {
+            output.innerHTML = `<span style="color: var(--danger);">✗ Error: ${e.message}</span>`;
+        }
+    }
+
+
+    // ============================================
+    // CHALLENGE FUNCTIONS - FORENSICS
+    // ============================================
+
+    // EXIF Command Executor
+    function executeStegoCommand() {
+        const input = document.getElementById('stegoCommand');
+        const command = input.value.trim();
+        const terminal = document.getElementById('stegoTerminal');
+
+        if (!command) return;
+
+        // แสดงคำสั่งที่พิมพ์พร้อม prompt
+        terminal.innerHTML += `\n$ ${command}`;
+
+        const cmd = command.toLowerCase();
+
+        if (cmd.includes('binwalk') && !cmd.includes('-e')) {
+            terminal.innerHTML += `
         DECIMAL   HEXADECIMAL  DESCRIPTION
         --------------------------------------------------------------------------------
         0         0x0          JPEG image data, JFIF standard 1.01
@@ -3296,59 +3317,59 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         8534      0x2156       End of Zip archive
 
         Found ZIP file at offset 8187!`;
-            } 
-            else if (cmd.includes('binwalk -e') || cmd.includes('dd')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('binwalk -e') || cmd.includes('dd')) {
+            terminal.innerHTML += `
         Extracting hidden.zip...
         347 bytes extracted
         File: hidden.zip (password protected)`;
-            } 
-            else if (cmd.includes('unzip')) {
-                if (cmd.includes('whiteflag')) {
-                    terminal.innerHTML += `
+        }
+        else if (cmd.includes('unzip')) {
+            if (cmd.includes('whiteflag')) {
+                terminal.innerHTML += `
         Archive: hidden.zip
         inflating: secret.txt
 
         Contents of secret.txt:
         c2VjWHBsb3Jle2IxbndAbGtfc3QzZzBfYjRzZTY0X2gxZGQzbn0=`;
-                } else {
-                    terminal.innerHTML += `
+            } else {
+                terminal.innerHTML += `
         Archive: hidden.zip
         Error: incorrect password
         Hint: Look at the image content`;
-                }
-            } 
-            else if (cmd.includes('base64 -d') || cmd.includes('base64 --decode')) {
-                terminal.innerHTML += `
+            }
+        }
+        else if (cmd.includes('base64 -d') || cmd.includes('base64 --decode')) {
+            terminal.innerHTML += `
         secXplore{b1nw@lk_st3g0_b4se64_h1dd3n}`;
-            } 
-            else {
-                terminal.innerHTML += `
+        }
+        else {
+            terminal.innerHTML += `
         bash: ${command}: command not found
         Try: binwalk white_flag.jpg`;
-            }
-            
-            // Clear input
-            input.value = '';
-            
-            // Scroll to bottom
-            const terminalContainer = terminal.closest('.terminal');
-            terminalContainer.scrollTop = terminalContainer.scrollHeight;
-            
-            // Focus back to input
-            input.focus();
         }
-        function executeEXIFCommand() {
-            const input = document.getElementById('exifCommand');
-            const command = input.value.trim();
-            const terminal = document.getElementById('exifTerminal');
-            if (!command) return;
-            // แสดงคำสั่งที่พิมพ์
-            terminal.innerHTML += `\n$ ${command}`;
-            const cmd = command.toLowerCase();
-            // exiftool with -a flag (all tags)
-            if (cmd.includes('exiftool') && cmd.includes('birthday') && cmd.includes('-a')) {
-                terminal.innerHTML += `
+
+        // Clear input
+        input.value = '';
+
+        // Scroll to bottom
+        const terminalContainer = terminal.closest('.terminal');
+        terminalContainer.scrollTop = terminalContainer.scrollHeight;
+
+        // Focus back to input
+        input.focus();
+    }
+    function executeEXIFCommand() {
+        const input = document.getElementById('exifCommand');
+        const command = input.value.trim();
+        const terminal = document.getElementById('exifTerminal');
+        if (!command) return;
+        // แสดงคำสั่งที่พิมพ์
+        terminal.innerHTML += `\n$ ${command}`;
+        const cmd = command.toLowerCase();
+        // exiftool with -a flag (all tags)
+        if (cmd.includes('exiftool') && cmd.includes('birthday') && cmd.includes('-a')) {
+            terminal.innerHTML += `
             ExifTool Version Number         : 12.40
             File Name                       : birthday.jpg
             File Size                       : 245 KB
@@ -3372,15 +3393,15 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
             Exif Image Width                : 1200
             Exif Image Height               : 800
             GPS Position                    : (not set)`;
-            }
-            // exiftool with -Copyright flag
-            else if (cmd.includes('exiftool') && cmd.includes('-copyright')) {
-                terminal.innerHTML += `
+        }
+        // exiftool with -Copyright flag
+        else if (cmd.includes('exiftool') && cmd.includes('-copyright')) {
+            terminal.innerHTML += `
             Copyright                       : secXplore{ex1f_m3t4d4t4_h1dd3n_1nf0}`;
-            }
-            // exiftool with -G flag (group names)
-            else if (cmd.includes('exiftool') && cmd.includes('birthday') && cmd.includes('-g')) {
-                terminal.innerHTML += `
+        }
+        // exiftool with -G flag (group names)
+        else if (cmd.includes('exiftool') && cmd.includes('birthday') && cmd.includes('-g')) {
+            terminal.innerHTML += `
             [File]          File Name                       : birthday.jpg
             [File]          File Size                       : 245 KB
             [File]          File Type                       : JPEG
@@ -3389,10 +3410,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
             [EXIF]          Artist                          : Anonymous
             [IFD0]          Copyright                       : secXplore{ex1f_m3t4d4t4_h1dd3n_1nf0}
             [EXIF]          User Comment                    : Happy 20th Birthday!`;
-            }
-            // basic exiftool
-            else if (cmd.includes('exiftool') && cmd.includes('birthday')) {
-                terminal.innerHTML += `
+        }
+        // basic exiftool
+        else if (cmd.includes('exiftool') && cmd.includes('birthday')) {
+            terminal.innerHTML += `
             File Name                       : birthday.jpg
             File Size                       : 245 KB
             File Type                       : JPEG
@@ -3402,15 +3423,15 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
             Date/Time Original              : 2024:01:20 14:30:00
             Artist                          : Anonymous
             Try: exiftool -a birthday.jpg for all tags`;
-            }
-            // strings command
-            else if (cmd.includes('strings') && cmd.includes('birthday')) {
-                if (cmd.includes('grep') && cmd.includes('sec')) {
-                    terminal.innerHTML += `
+        }
+        // strings command
+        else if (cmd.includes('strings') && cmd.includes('birthday')) {
+            if (cmd.includes('grep') && cmd.includes('sec')) {
+                terminal.innerHTML += `
             Searching for 'sec' pattern...
             secXplore{ex1f_m3t4d4t4_h1dd3n_1nf0}`;
-                } else {
-                    terminal.innerHTML += `
+            } else {
+                terminal.innerHTML += `
             JFIF
             Adobe
             Photoshop
@@ -3421,22 +3442,22 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
             secXplore{ex1f_m3t4d4t4_h1dd3n_1nf0}
             sRGB
             ...`;
-                }
             }
-            // file command
-            else if (cmd === 'file birthday.jpg') {
-                terminal.innerHTML += `
+        }
+        // file command
+        else if (cmd === 'file birthday.jpg') {
+            terminal.innerHTML += `
             birthday.jpg: JPEG image data, JFIF standard 1.01, resolution (DPI), density 72x72, segment length 16, baseline, precision 8, 1200x800, components 3`;
-            }
-            // ls command
-            else if (cmd === 'ls' || cmd === 'ls -la') {
-                terminal.innerHTML += `
+        }
+        // ls command
+        else if (cmd === 'ls' || cmd === 'ls -la') {
+            terminal.innerHTML += `
             total 245
             -rw-r--r-- 1 user user 245KB Jan 20 14:30 birthday.jpg`;
-            }
-            // help
-            else if (cmd === 'help') {
-                terminal.innerHTML += `
+        }
+        // help
+        else if (cmd === 'help') {
+            terminal.innerHTML += `
             Available commands:
             - exiftool birthday.jpg
             - exiftool -a birthday.jpg (show all tags)
@@ -3445,10 +3466,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
             - strings birthday.jpg | grep -i "sec"
             - file birthday.jpg
             - ls`;
-            }
-            // clear
-            else if (cmd === 'clear') {
-                terminal.innerHTML = `$ file birthday.jpg
+        }
+        // clear
+        else if (cmd === 'clear') {
+            terminal.innerHTML = `$ file birthday.jpg
             birthday.jpg: JPEG image data
             Available commands:
             - exiftool birthday.jpg (basic metadata)
@@ -3456,32 +3477,32 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
             - exiftool -G birthday.jpg (show group names)
             - exiftool -Copyright birthday.jpg (specific tag)
             - strings birthday.jpg | grep -i "sec" (search strings)`;
-                input.value = '';
-                return;
-            }
-            // command not found
-            else {
-                terminal.innerHTML += `
+            input.value = '';
+            return;
+        }
+        // command not found
+        else {
+            terminal.innerHTML += `
             bash: ${command}: command not found
             Type 'help' for available commands`;
-            }
-            // Clear input and scroll
-            input.value = '';
-            const terminalContainer = terminal.closest('.terminal');
-            terminalContainer.scrollTop = terminalContainer.scrollHeight;
-            input.focus();
-            }
+        }
+        // Clear input and scroll
+        input.value = '';
+        const terminalContainer = terminal.closest('.terminal');
+        terminalContainer.scrollTop = terminalContainer.scrollHeight;
+        input.focus();
+    }
 
-        function executeGeoCommand() {
-            const input = document.getElementById('geoCommand');
-            const command = input.value.trim();
-            const terminal = document.getElementById('geoTerminal');
-            if (!command) return;
-            terminal.innerHTML += `\n$ ${command}`;
-            const cmd = command.toLowerCase();
-            // exiftool with GPS and numeric format
-            if (cmd.includes('exiftool') && cmd.includes('gps') && (cmd.includes('-n') || cmd.includes('%.6f'))) {
-                terminal.innerHTML += `
+    function executeGeoCommand() {
+        const input = document.getElementById('geoCommand');
+        const command = input.value.trim();
+        const terminal = document.getElementById('geoTerminal');
+        if (!command) return;
+        terminal.innerHTML += `\n$ ${command}`;
+        const cmd = command.toLowerCase();
+        // exiftool with GPS and numeric format
+        if (cmd.includes('exiftool') && cmd.includes('gps') && (cmd.includes('-n') || cmd.includes('%.6f'))) {
+            terminal.innerHTML += `
             GPS Latitude                    : 13.8115
             GPS Longitude                   : 100.5629
             GPS Altitude                    : 45 m Above Sea Level
@@ -3490,10 +3511,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
             GPS Altitude Ref                : Above Sea Level
             GPS Time Stamp                  : 07:30:00
             GPS Date Stamp                  : 2024:01:20`;
-            }
-            // exiftool with GPS (DMS format)
-            else if (cmd.includes('exiftool') && cmd.includes('gps')) {
-                terminal.innerHTML += `
+        }
+        // exiftool with GPS (DMS format)
+        else if (cmd.includes('exiftool') && cmd.includes('gps')) {
+            terminal.innerHTML += `
             GPS Latitude                    : 13 deg 48' 41.40" N
             GPS Longitude                   : 100 deg 33' 46.44" E
             GPS Altitude                    : 45 m Above Sea Level
@@ -3501,42 +3522,42 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
             GPS Date Stamp                  : 2024:01:20
             GPS Position                    : 13 deg 48' 41.40" N, 100 deg 33' 46.44" E
             Use -n flag for decimal format: exiftool -n -GPS* Where_is_it.jpg`;
-            }
-            // basic exiftool
-            else if (cmd.includes('exiftool') && cmd.includes('where')) {
-                terminal.innerHTML += `
+        }
+        // basic exiftool
+        else if (cmd.includes('exiftool') && cmd.includes('where')) {
+            terminal.innerHTML += `
             File Name                       : Where_is_it.jpg
             File Size                       : 512 KB
             Camera Model                    : iPhone 12
             Date/Time Original              : 2024:01:20 14:30:00
             GPS Position                    : 13 deg 48' 41.40" N, 100 deg 33' 46.44" E
             Try: exiftool -GPS* Where_is_it.jpg for GPS data only`;
-            }
-            // md5sum with correct answer
-            else if (cmd.includes('md5') && cmd.includes('bangkokuniversity')) {
-                terminal.innerHTML += `
+        }
+        // md5sum with correct answer
+        else if (cmd.includes('md5') && cmd.includes('bangkokuniversity')) {
+            terminal.innerHTML += `
             4a8d8c8e8f3b5d7c9e2a1f6b4c8d3e9a  -`;
-            }
-            // md5sum general
-            else if (cmd.includes('echo') && cmd.includes('md5')) {
-                if (cmd.includes('bangkok') && !cmd.includes('bangkokuniversity')) {
-                    terminal.innerHTML += `
+        }
+        // md5sum general
+        else if (cmd.includes('echo') && cmd.includes('md5')) {
+            if (cmd.includes('bangkok') && !cmd.includes('bangkokuniversity')) {
+                terminal.innerHTML += `
             Wrong format. Try: echo -n "bangkokuniversity" | md5sum
             (lowercase, no spaces)`;
-                } else {
-                    terminal.innerHTML += `
+            } else {
+                terminal.innerHTML += `
             Usage: echo -n "text" | md5sum
             Example: echo -n "bangkokuniversity" | md5sum`;
-                }
             }
-            // file command
-            else if (cmd.includes('file') && cmd.includes('where')) {
-                terminal.innerHTML += `
+        }
+        // file command
+        else if (cmd.includes('file') && cmd.includes('where')) {
+            terminal.innerHTML += `
             Where_is_it.jpg: JPEG image data, EXIF standard 2.2, resolution (DPI), density 72x72`;
-            }
-            // help
-            else if (cmd === 'help') {
-                terminal.innerHTML += `
+        }
+        // help
+        else if (cmd === 'help') {
+            terminal.innerHTML += `
             Available commands:
             - exiftool Where_is_it.jpg
             - exiftool -GPS* Where_is_it.jpg (GPS only)
@@ -3544,52 +3565,52 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
             - echo -n "text" | md5sum
             - file Where_is_it.jpg
             - ls`;
-            }
-            // clear
-            else if (cmd === 'clear') {
-                terminal.innerHTML = `$ file Where_is_it.jpg
+        }
+        // clear
+        else if (cmd === 'clear') {
+            terminal.innerHTML = `$ file Where_is_it.jpg
             Where_is_it.jpg: JPEG image data
             Available commands:
             - exiftool -GPS* Where_is_it.jpg (GPS data only)
             - exiftool -n -GPS* Where_is_it.jpg (numeric GPS)
             - exiftool -c "%.6f" -GPS* Where_is_it.jpg (decimal format)
             - echo -n "text" | md5sum (hash text)`;
-                input.value = '';
-                return;
-            }
-            // ls
-            else if (cmd === 'ls' || cmd === 'ls -la') {
-                terminal.innerHTML += `
+            input.value = '';
+            return;
+        }
+        // ls
+        else if (cmd === 'ls' || cmd === 'ls -la') {
+            terminal.innerHTML += `
             total 512
             -rw-r--r-- 1 user user 512KB Jan 20 14:30 Where_is_it.jpg`;
-            }
-            // command not found
-            else {
-                terminal.innerHTML += `
+        }
+        // command not found
+        else {
+            terminal.innerHTML += `
             bash: ${command}: command not found
             Type 'help' for available commands`;
-            }
-            input.value = '';
-            const terminalContainer = terminal.closest('.terminal');
-            terminalContainer.scrollTop = terminalContainer.scrollHeight;
-            input.focus();
-            }
+        }
+        input.value = '';
+        const terminalContainer = terminal.closest('.terminal');
+        terminalContainer.scrollTop = terminalContainer.scrollHeight;
+        input.focus();
+    }
 
-        // Disk Image Analysis Functions
-        function executeDiskCommand() {
-            const input = document.getElementById('diskCommand');
-            const command = input.value.trim();
-            const terminal = document.getElementById('diskTerminal');
-            
-            if (!command) return;
-            
-            terminal.innerHTML += `\n$ ${command}`;
-            
-            const cmd = command.toLowerCase();
-            
-            // mmls - view partition table
-            if (cmd.includes('mmls')) {
-                terminal.innerHTML += `
+    // Disk Image Analysis Functions
+    function executeDiskCommand() {
+        const input = document.getElementById('diskCommand');
+        const command = input.value.trim();
+        const terminal = document.getElementById('diskTerminal');
+
+        if (!command) return;
+
+        terminal.innerHTML += `\n$ ${command}`;
+
+        const cmd = command.toLowerCase();
+
+        // mmls - view partition table
+        if (cmd.includes('mmls')) {
+            terminal.innerHTML += `
         DOS Partition Table
         Offset Sector: 0
         Units are in 512-byte sectors
@@ -3601,10 +3622,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         003:  -------   0001026048   0001048575   0000022528   Unallocated
 
         Partition 002 contains ext4 filesystem`;
-            }
-            // fls - list files including deleted
-            else if (cmd.includes('fls') && cmd.includes('-d')) {
-                terminal.innerHTML += `
+        }
+        // fls - list files including deleted
+        else if (cmd.includes('fls') && cmd.includes('-d')) {
+            terminal.innerHTML += `
         r/r 11: lost+found
         d/d 12: home
         r/r 15: .bash_history
@@ -3618,10 +3639,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
 
         Found 3 deleted files!
         Note inode 12847 for secret_data.txt`;
-            }
-            // fls without -d (only active files)
-            else if (cmd.includes('fls') && !cmd.includes('-d')) {
-                terminal.innerHTML += `
+        }
+        // fls without -d (only active files)
+        else if (cmd.includes('fls') && !cmd.includes('-d')) {
+            terminal.innerHTML += `
         r/r 11: lost+found
         d/d 12: home
         r/r 15: .bash_history
@@ -3631,18 +3652,18 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         r/r 19: Desktop
 
         No deleted files shown. Use -d flag to show deleted files`;
-            }
-            // icat - recover file by inode (wrong inode)
-            else if (cmd.includes('icat') && !cmd.includes('12847')) {
-                terminal.innerHTML += `
+        }
+        // icat - recover file by inode (wrong inode)
+        else if (cmd.includes('icat') && !cmd.includes('12847')) {
+            terminal.innerHTML += `
         Error: Cannot recover file from inode
         File may be too fragmented or overwritten
         Try inode 12847 for secret_data.txt`;
-            }
-            // icat - recover correct file
-            else if (cmd.includes('icat') && cmd.includes('12847')) {
-                if (cmd.includes('>') || cmd.includes('cat')) {
-                    terminal.innerHTML += `
+        }
+        // icat - recover correct file
+        else if (cmd.includes('icat') && cmd.includes('12847')) {
+            if (cmd.includes('>') || cmd.includes('cat')) {
+                terminal.innerHTML += `
         File recovered successfully!
 
         Content of secret_data.txt:
@@ -3658,15 +3679,15 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         - [DATA CORRUPTED - USE FILE CARVING]
 
         File appears corrupted. Try file carving or hex search`;
-                } else {
-                    terminal.innerHTML += `
+            } else {
+                terminal.innerHTML += `
         QnJvamVjdDogU2VjcmV0T3BzCkRhdGU6IDIwMjQtMDEtMTUKU3RhdHVz...
         (binary data - redirect to file: icat evidence.dd 12847 > recovered.txt)`;
-                }
             }
-            // strings search for flag
-            else if (cmd.includes('strings') && cmd.includes('flag')) {
-                terminal.innerHTML += `
+        }
+        // strings search for flag
+        else if (cmd.includes('strings') && cmd.includes('flag')) {
+            terminal.innerHTML += `
         Searching for "flag" in strings...
 
         /home/user/.bash_history
@@ -3679,10 +3700,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         [CORRUPTED DATA]
 
         Partial flag found! Need to search deeper`;
-            }
-            // strings search for sec
-            else if (cmd.includes('strings') && cmd.includes('sec')) {
-                terminal.innerHTML += `
+        }
+        // strings search for sec
+        else if (cmd.includes('strings') && cmd.includes('sec')) {
+            terminal.innerHTML += `
         secret_data.txt
         SecretOps
         secXplore{d1sk_f0r3ns1cs_d3l3t3d_r3c0v3ry}
@@ -3690,27 +3711,27 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         Security clearance
 
         Full flag found in strings!`;
-            }
-            // xxd hex dump with grep
-            else if (cmd.includes('xxd') && cmd.includes('grep')) {
-                if (cmd.includes('sec') || cmd.includes('flag')) {
-                    terminal.innerHTML += `
+        }
+        // xxd hex dump with grep
+        else if (cmd.includes('xxd') && cmd.includes('grep')) {
+            if (cmd.includes('sec') || cmd.includes('flag')) {
+                terminal.innerHTML += `
         001f4b20: 6461 7461 2073 6563 5870 6c6f 7265 7b64  data secXplore{d
         001f4b30: 3173 6b5f 6630 7233 6e73 3163 735f 6433  1sk_f0r3ns1cs_d3
         001f4b40: 6c33 7433 645f 7233 6330 7633 7279 7d00  l3t3d_r3c0v3ry}.
 
         Flag found at offset 0x1F4B2C!
         secXplore{d1sk_f0r3ns1cs_d3l3t3d_r3c0v3ry}`;
-                } else {
-                    terminal.innerHTML += `
+            } else {
+                terminal.innerHTML += `
         00000000: 5375 7065 7220 626c 6f63 6b20 6261 636b  Super block back
         00000010: 7570 2073 746f 7265 6420 6174 2062 6c6f  up stored at blo
         Try: xxd evidence.dd | grep -i "sec"`;
-                }
             }
-            // foremost file carving
-            else if (cmd.includes('foremost')) {
-                terminal.innerHTML += `
+        }
+        // foremost file carving
+        else if (cmd.includes('foremost')) {
+            terminal.innerHTML += `
         Foremost version 1.5.7 by Jesse Kornblum, Kris Kendall, and Nick Mikus
         Processing: evidence.dd
         |*************************************************|
@@ -3726,10 +3747,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
 
         File 00000847.txt contains:
         secXplore{d1sk_f0r3ns1cs_d3l3t3d_r3c0v3ry}`;
-            }
-            // fsstat - filesystem statistics
-            else if (cmd.includes('fsstat')) {
-                terminal.innerHTML += `
+        }
+        // fsstat - filesystem statistics
+        else if (cmd.includes('fsstat')) {
+            terminal.innerHTML += `
         FILE SYSTEM INFORMATION
         --------------------------------------------
         File System Type: Ext4
@@ -3749,26 +3770,26 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         Total Block Groups: 15
 
         Deleted inodes available for recovery`;
-            }
-            // dd to extract specific offset
-            else if (cmd.includes('dd') && cmd.includes('skip') && cmd.includes('0x1f4b2c')) {
-                terminal.innerHTML += `
+        }
+        // dd to extract specific offset
+        else if (cmd.includes('dd') && cmd.includes('skip') && cmd.includes('0x1f4b2c')) {
+            terminal.innerHTML += `
         32+0 records in
         32+0 records out
         32 bytes copied
 
         Extracted data:
         secXplore{d1sk_f0r3ns1cs_d3l3t3d_r3c0v3ry}`;
-            }
-            // dd wrong offset
-            else if (cmd.includes('dd') && cmd.includes('skip')) {
-                terminal.innerHTML += `
+        }
+        // dd wrong offset
+        else if (cmd.includes('dd') && cmd.includes('skip')) {
+            terminal.innerHTML += `
         Extracted data contains no useful information
         Try offset 0x1F4B2C (decimal: 2050860)`;
-            }
-            // help
-            else if (cmd === 'help') {
-                terminal.innerHTML += `
+        }
+        // help
+        else if (cmd === 'help') {
+            terminal.innerHTML += `
         Available commands:
         - mmls evidence.dd (partition table)
         - fls -r -d evidence.dd (list deleted files)
@@ -3778,10 +3799,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         - foremost -i evidence.dd -o output
         - fsstat evidence.dd (filesystem stats)
         - dd if=evidence.dd bs=1 skip=OFFSET count=100`;
-            }
-            // clear
-            else if (cmd === 'clear') {
-                terminal.innerHTML = `$ file evidence.dd
+        }
+        // clear
+        else if (cmd === 'clear') {
+            terminal.innerHTML = `$ file evidence.dd
         evidence.dd: Linux rev 1.0 ext4 filesystem data
 
         Available commands:
@@ -3791,48 +3812,48 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         - xxd evidence.dd | grep -i "sec" (hex dump search)
         - strings evidence.dd | grep -i "flag" (string search)
         - foremost -i evidence.dd -o output (file carving)`;
-                input.value = '';
-                return;
-            }
-            // command not found
-            else {
-                terminal.innerHTML += `
+            input.value = '';
+            return;
+        }
+        // command not found
+        else {
+            terminal.innerHTML += `
         bash: ${command}: command not found
         Type 'help' for available commands`;
-            }
-            
-            input.value = '';
-            const terminalContainer = terminal.closest('.terminal');
-            terminalContainer.scrollTop = terminalContainer.scrollHeight;
-            input.focus();
         }
 
-        // ============================================
-        // CHALLENGE FUNCTIONS - NETWORK SECURITY
-        // ============================================
+        input.value = '';
+        const terminalContainer = terminal.closest('.terminal');
+        terminalContainer.scrollTop = terminalContainer.scrollHeight;
+        input.focus();
+    }
 
-        // Packet Sniffer Command Executor
-        function executePacketCommand() {
-            const input = document.getElementById('packetCommand');
-            const command = input.value.trim();
-            const terminal = document.getElementById('packetTerminal');
-            
-            if (!command) return;
-            
-            terminal.innerHTML += `\n$ ${command}`;
-            
-            const cmd = command.toLowerCase();
-            
-            if (cmd.includes('tcpdump -r') && !cmd.includes('-a')) {
-                terminal.innerHTML += `
+    // ============================================
+    // CHALLENGE FUNCTIONS - NETWORK SECURITY
+    // ============================================
+
+    // Packet Sniffer Command Executor
+    function executePacketCommand() {
+        const input = document.getElementById('packetCommand');
+        const command = input.value.trim();
+        const terminal = document.getElementById('packetTerminal');
+
+        if (!command) return;
+
+        terminal.innerHTML += `\n$ ${command}`;
+
+        const cmd = command.toLowerCase();
+
+        if (cmd.includes('tcpdump -r') && !cmd.includes('-a')) {
+            terminal.innerHTML += `
         14:23:01.123456 IP 192.168.1.105.52341 > 10.0.0.50.80: Flags [S], seq 1234567890
         14:23:01.124567 IP 10.0.0.50.80 > 192.168.1.105.52341: Flags [S.], seq 9876543210
         14:23:01.234567 IP 192.168.1.105.52341 > 10.0.0.50.80: Flags [P.], POST /api/login
 
         Too many packets. Use tshark -Y "http" to filter`;
-            }
-            else if (cmd.includes('tcpdump') && cmd.includes('-a')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('tcpdump') && cmd.includes('-a')) {
+            terminal.innerHTML += `
         POST /api/login HTTP/1.1
         Host: insecure-bank.com
         Content-Type: application/x-www-form-urlencoded
@@ -3840,23 +3861,23 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         username=admin&password=secXplore{p4ck3t_sn1ff3r_pl41nt3xt}&remember=true
 
         Found plaintext credentials!`;
-            }
-            else if (cmd.includes('tshark') && cmd.includes('http') && !cmd.includes('post')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('tshark') && cmd.includes('http') && !cmd.includes('post')) {
+            terminal.innerHTML += `
         147   14.523456 192.168.1.105 → 10.0.0.50    HTTP GET /index.html
         289   29.123456 192.168.1.105 → 10.0.0.50    HTTP GET /api/data
         432   43.654321 192.168.1.105 → 10.0.0.50    HTTP POST /api/login
 
         Use -Y "http.request.method == POST" to filter POST only`;
-            }
-            else if (cmd.includes('tshark') && cmd.includes('post')) {
-                if (cmd.includes('-t fields')) {
-                    terminal.innerHTML += `
+        }
+        else if (cmd.includes('tshark') && cmd.includes('post')) {
+            if (cmd.includes('-t fields')) {
+                terminal.innerHTML += `
         username=admin&password=secXplore{p4ck3t_sn1ff3r_pl41nt3xt}&remember=true
 
         Flag found in POST data!`;
-                } else {
-                    terminal.innerHTML += `
+            } else {
+                terminal.innerHTML += `
         432   43.654321 192.168.1.105 → 10.0.0.50    HTTP POST /api/login
         
         Frame 432: HTTP POST /api/login
@@ -3864,18 +3885,18 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
             Form data: username=admin&password=secXplore{p4ck3t_sn1ff3r_pl41nt3xt}
 
         Add -T fields -e http.file_data to extract data`;
-                }
             }
-            else if (cmd === 'help') {
-                terminal.innerHTML += `
+        }
+        else if (cmd === 'help') {
+            terminal.innerHTML += `
         Available commands:
         - tcpdump -r capture.pcap
         - tcpdump -r capture.pcap -A
         - tshark -r capture.pcap -Y "http"
         - tshark -r capture.pcap -Y "http.request.method == POST"`;
-            }
-            else if (cmd === 'clear') {
-                terminal.innerHTML = `$ tcpdump -r capture.pcap
+        }
+        else if (cmd === 'clear') {
+            terminal.innerHTML = `$ tcpdump -r capture.pcap
         Reading from capture.pcap
 
         Available commands:
@@ -3884,43 +3905,43 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         - tshark -r capture.pcap -Y "http" (filter HTTP)
         - tshark -r capture.pcap -Y "http.request.method == POST" (POST only)
         - tshark -r capture.pcap -Y "http.request.method == POST" -T fields -e http.file_data (extract POST data)`;
-                input.value = '';
-                return;
-            }
-            else {
-                terminal.innerHTML += `
-        bash: ${command}: command not found`;
-            }
-            
             input.value = '';
-            const terminalContainer = terminal.closest('.terminal');
-            terminalContainer.scrollTop = terminalContainer.scrollHeight;
-            input.focus();
+            return;
+        }
+        else {
+            terminal.innerHTML += `
+        bash: ${command}: command not found`;
         }
 
-        // DNS Tunneling Command Executor
-        function executeDNSCommand() {
-            const input = document.getElementById('dnsCommand');
-            const command = input.value.trim();
-            const terminal = document.getElementById('dnsTerminal');
-            
-            if (!command) return;
-            
-            terminal.innerHTML += `\n$ ${command}`;
-            
-            const cmd = command.toLowerCase();
-            
-            if (cmd.includes('tshark') && cmd.includes('dns') && !cmd.includes('exfil') && !cmd.includes('-t fields')) {
-                terminal.innerHTML += `
+        input.value = '';
+        const terminalContainer = terminal.closest('.terminal');
+        terminalContainer.scrollTop = terminalContainer.scrollHeight;
+        input.focus();
+    }
+
+    // DNS Tunneling Command Executor
+    function executeDNSCommand() {
+        const input = document.getElementById('dnsCommand');
+        const command = input.value.trim();
+        const terminal = document.getElementById('dnsTerminal');
+
+        if (!command) return;
+
+        terminal.innerHTML += `\n$ ${command}`;
+
+        const cmd = command.toLowerCase();
+
+        if (cmd.includes('tshark') && cmd.includes('dns') && !cmd.includes('exfil') && !cmd.includes('-t fields')) {
+            terminal.innerHTML += `
             3   0.002222 192.168.1.105 → 8.8.8.8      DNS Standard query A google.com
             4   0.003333 8.8.8.8 → 192.168.1.105      DNS Standard query response
         15   1.234567 192.168.1.105 → 8.8.8.8      DNS Standard query A NzM2NTYz.exfil.malicious.com
         28   2.345678 192.168.1.105 → 8.8.8.8      DNS Standard query A NTg3MDcw.exfil.malicious.com
 
         Suspicious DNS queries detected! Use filter with "exfil"`;
-            }
-            else if (cmd.includes('tshark') && cmd.includes('exfil') && cmd.includes('-t fields')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('tshark') && cmd.includes('exfil') && cmd.includes('-t fields')) {
+            terminal.innerHTML += `
         NzM2NTYzNTg3MDcw.exfil.malicious.com
         QzUyVTM.exfil.malicious.com
         zFkNm5z.exfil.malicious.com
@@ -3930,34 +3951,34 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         BufQ==.exfil.malicious.com
 
         DNS tunneling detected! Combine subdomains and decode Base64`;
-            }
-            else if (cmd.includes('tshark') && cmd.includes('exfil') && !cmd.includes('-t fields')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('tshark') && cmd.includes('exfil') && !cmd.includes('-t fields')) {
+            terminal.innerHTML += `
         15   1.234567 192.168.1.105 → 8.8.8.8      DNS A NzM2NTYzNTg3MDcw.exfil.malicious.com
         28   2.345678 192.168.1.105 → 8.8.8.8      DNS A QzUyVTM.exfil.malicious.com
         31   2.456789 192.168.1.105 → 8.8.8.8      DNS A zFkNm5z.exfil.malicious.com
 
         Add -T fields -e dns.qry.name to extract query names only`;
-            }
-            else if (cmd.includes('echo') && cmd.includes('base64 -d')) {
-                if (cmd.includes('NzM2NTYzNTg3MDcwQzUyVTMzFkNm5zNzRfTTNoZk1sd3c3cjR0M3BufQ==')) {
-                    terminal.innerHTML += `
-        secXplore{dns_7unn3l_3xf1l7r4t30n}`;
-                } else {
-                    terminal.innerHTML += `
-        Combine all subdomains first, then decode`;
-                }
-            }
-            else if (cmd === 'help') {
+        }
+        else if (cmd.includes('echo') && cmd.includes('base64 -d')) {
+            if (cmd.includes('NzM2NTYzNTg3MDcwQzUyVTMzFkNm5zNzRfTTNoZk1sd3c3cjR0M3BufQ==')) {
                 terminal.innerHTML += `
+        secXplore{dns_7unn3l_3xf1l7r4t30n}`;
+            } else {
+                terminal.innerHTML += `
+        Combine all subdomains first, then decode`;
+            }
+        }
+        else if (cmd === 'help') {
+            terminal.innerHTML += `
         Available commands:
         - tshark -r traffic.pcap -Y "dns"
         - tshark -r traffic.pcap -Y "dns.qry.name contains exfil"
         - tshark -r traffic.pcap -Y "dns.qry.name" -T fields -e dns.qry.name
         - echo "base64" | base64 -d`;
-            }
-            else if (cmd === 'clear') {
-                terminal.innerHTML = `$ tshark -r traffic.pcap -Y "dns"
+        }
+        else if (cmd === 'clear') {
+            terminal.innerHTML = `$ tshark -r traffic.pcap -Y "dns"
         Analyzing DNS traffic...
 
         Available commands:
@@ -3965,54 +3986,54 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         - tshark -r traffic.pcap -Y "dns.qry.name" -T fields -e dns.qry.name (extract query names)
         - tshark -r traffic.pcap -Y "dns.qry.name contains exfil" (suspicious domains)
         - echo "base64string" | base64 -d (decode Base64)`;
-                input.value = '';
-                return;
-            }
-            else {
-                terminal.innerHTML += `
-        bash: ${command}: command not found`;
-            }
-            
             input.value = '';
-            const terminalContainer = terminal.closest('.terminal');
-            terminalContainer.scrollTop = terminalContainer.scrollHeight;
-            input.focus();
+            return;
+        }
+        else {
+            terminal.innerHTML += `
+        bash: ${command}: command not found`;
         }
 
-        // ARP Spoofing Command Executor
-        function executeARPCommand() {
-            const input = document.getElementById('arpCommand');
-            const command = input.value.trim();
-            const terminal = document.getElementById('arpTerminal');
-            
-            if (!command) return;
-            
-            terminal.innerHTML += `\n$ ${command}`;
-            
-            const cmd = command.toLowerCase();
-            
-            if (cmd.includes('arp -a')) {
-                terminal.innerHTML += `
+        input.value = '';
+        const terminalContainer = terminal.closest('.terminal');
+        terminalContainer.scrollTop = terminalContainer.scrollHeight;
+        input.focus();
+    }
+
+    // ARP Spoofing Command Executor
+    function executeARPCommand() {
+        const input = document.getElementById('arpCommand');
+        const command = input.value.trim();
+        const terminal = document.getElementById('arpTerminal');
+
+        if (!command) return;
+
+        terminal.innerHTML += `\n$ ${command}`;
+
+        const cmd = command.toLowerCase();
+
+        if (cmd.includes('arp -a')) {
+            terminal.innerHTML += `
         Interface: eth0
         Internet Address      Physical Address      Type
         192.168.1.1          aa:bb:cc:dd:ee:ff     dynamic
         192.168.1.100        11:22:33:44:55:66     dynamic
         192.168.1.50         aa:aa:aa:aa:aa:aa     dynamic (self)`;
-            }
-            else if (cmd.includes('arpspoof') && cmd.includes('192.168.1.100')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('arpspoof') && cmd.includes('192.168.1.100')) {
+            terminal.innerHTML += `
         aa:aa:aa:aa:aa:aa aa:bb:cc:dd:ee:ff 0806 42: arp reply 192.168.1.1 is-at aa:aa:aa:aa:aa:aa
         aa:aa:aa:aa:aa:aa aa:bb:cc:dd:ee:ff 0806 42: arp reply 192.168.1.1 is-at aa:aa:aa:aa:aa:aa
 
         ARP poisoning active! Victim thinks attacker MAC is gateway`;
-            }
-            else if (cmd.includes('ip_forward') || cmd.includes('echo 1')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('ip_forward') || cmd.includes('echo 1')) {
+            terminal.innerHTML += `
         IP forwarding enabled
         Traffic will be forwarded transparently to real gateway`;
-            }
-            else if (cmd.includes('tcpdump') && cmd.includes('grep')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('tcpdump') && cmd.includes('grep')) {
+            terminal.innerHTML += `
         POST /login HTTP/1.1
         Host: bank.com
         Content-Type: application/x-www-form-urlencoded
@@ -4020,24 +4041,24 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         username=victim@email.com&password=secXplore{4rp_sp00f_m1tm_4tt4ck}
 
         Intercepted credentials from MITM attack!`;
-            }
-            else if (cmd.includes('tcpdump') && !cmd.includes('grep')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('tcpdump') && !cmd.includes('grep')) {
+            terminal.innerHTML += `
         14:25:01.123456 IP 192.168.1.100.52341 > 10.0.0.50.80: Flags [P.], POST /login
         14:25:01.234567 IP 10.0.0.50.80 > 192.168.1.100.52341: Flags [.], ack
 
         Add -A flag or pipe to grep to see data`;
-            }
-            else if (cmd === 'help') {
-                terminal.innerHTML += `
+        }
+        else if (cmd === 'help') {
+            terminal.innerHTML += `
         Available commands:
         - arp -a
         - arpspoof -i eth0 -t 192.168.1.100 192.168.1.1
         - echo 1 > /proc/sys/net/ipv4/ip_forward
         - tcpdump -i eth0 -A | grep "password"`;
-            }
-            else if (cmd === 'clear') {
-                terminal.innerHTML = `$ arp -a
+        }
+        else if (cmd === 'clear') {
+            terminal.innerHTML = `$ arp -a
         Gateway (192.168.1.1) at aa:bb:cc:dd:ee:ff
         Victim (192.168.1.100) at 11:22:33:44:55:66
 
@@ -4046,71 +4067,71 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         - arpspoof -i eth0 -t 192.168.1.100 192.168.1.1 (poison victim)
         - tcpdump -i eth0 -n (capture traffic)
         - echo 1 > /proc/sys/net/ipv4/ip_forward (enable forwarding)`;
-                input.value = '';
-                return;
-            }
-            else {
-                terminal.innerHTML += `
-        bash: ${command}: command not found`;
-            }
-            
             input.value = '';
-            const terminalContainer = terminal.closest('.terminal');
-            terminalContainer.scrollTop = terminalContainer.scrollHeight;
-            input.focus();
+            return;
+        }
+        else {
+            terminal.innerHTML += `
+        bash: ${command}: command not found`;
         }
 
-        // SSL Strip Command Executor
-        function executeSSLCommand() {
-            const input = document.getElementById('sslCommand');
-            const command = input.value.trim();
-            const terminal = document.getElementById('sslTerminal');
-            
-            if (!command) return;
-            
-            terminal.innerHTML += `\n$ ${command}`;
-            
-            const cmd = command.toLowerCase();
-            
-            if (cmd.includes('tshark') && cmd.includes('http') && !cmd.includes('login')) {
-                terminal.innerHTML += `
+        input.value = '';
+        const terminalContainer = terminal.closest('.terminal');
+        terminalContainer.scrollTop = terminalContainer.scrollHeight;
+        input.focus();
+    }
+
+    // SSL Strip Command Executor
+    function executeSSLCommand() {
+        const input = document.getElementById('sslCommand');
+        const command = input.value.trim();
+        const terminal = document.getElementById('sslTerminal');
+
+        if (!command) return;
+
+        terminal.innerHTML += `\n$ ${command}`;
+
+        const cmd = command.toLowerCase();
+
+        if (cmd.includes('tshark') && cmd.includes('http') && !cmd.includes('login')) {
+            terminal.innerHTML += `
         147   14.523456 192.168.1.105 → 10.0.0.50    HTTP GET http://secure-bank.com/
         289   29.123456 192.168.1.105 → 10.0.0.50    HTTP POST http://secure-bank.com/api/login
 
         Notice: Should be https:// but downgraded to http://`;
-            }
-            else if (cmd.includes('tshark') && cmd.includes('login') && !cmd.includes('-t fields')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('tshark') && cmd.includes('login') && !cmd.includes('-t fields')) {
+            terminal.innerHTML += `
         289   29.123456 192.168.1.105 → 10.0.0.50    HTTP POST http://secure-bank.com/api/login
 
         Frame 289: HTTP POST
             Content-Type: application/json
             
         Use -T fields -e http.file_data to extract JSON`;
-            }
-            else if (cmd.includes('tshark') && cmd.includes('-t fields')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('tshark') && cmd.includes('-t fields')) {
+            terminal.innerHTML += `
         {"username":"victim@email.com","password":"secXplore{ssl_str1p_d0wngr4d3_pwn}","session":"abc123"}
 
         Flag found in JSON password field!`;
-            }
-            else if (cmd.includes('grep') && cmd.includes('password')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('grep') && cmd.includes('password')) {
+            terminal.innerHTML += `
         Searching binary content...
         password":"secXplore{ssl_str1p_d0wngr4d3_pwn}
 
         Flag extracted from stripped HTTPS traffic!`;
-            }
-            else if (cmd === 'help') {
-                terminal.innerHTML += `
+        }
+        else if (cmd === 'help') {
+            terminal.innerHTML += `
         Available commands:
         - tshark -r stripped.pcap -Y "http"
         - tshark -r stripped.pcap -Y "http.request.uri contains login"
         - tshark -r stripped.pcap -T fields -e http.file_data
         - grep -a "password" stripped.pcap`;
-            }
-            else if (cmd === 'clear') {
-                terminal.innerHTML = `$ tshark -r stripped.pcap
+        }
+        else if (cmd === 'clear') {
+            terminal.innerHTML = `$ tshark -r stripped.pcap
         Analyzing SSL stripped traffic...
 
         Available commands:
@@ -4118,38 +4139,38 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         - tshark -r stripped.pcap -Y "http.request.uri contains login" (login requests)
         - tshark -r stripped.pcap -T fields -e http.file_data (extract POST data)
         - grep -a "password" stripped.pcap (search for password)`;
-                input.value = '';
-                return;
-            }
-            else {
-                terminal.innerHTML += `
-        bash: ${command}: command not found`;
-            }
-            
             input.value = '';
-            const terminalContainer = terminal.closest('.terminal');
-            terminalContainer.scrollTop = terminalContainer.scrollHeight;
-            input.focus();
+            return;
+        }
+        else {
+            terminal.innerHTML += `
+        bash: ${command}: command not found`;
         }
 
-        // ============================================
-        // CHALLENGE FUNCTIONS - MOBILE SECURITY
-        // ============================================
+        input.value = '';
+        const terminalContainer = terminal.closest('.terminal');
+        terminalContainer.scrollTop = terminalContainer.scrollHeight;
+        input.focus();
+    }
 
-        // APK Command Executor
-        function executeAPKCommand() {
-            const input = document.getElementById('apkCommand');
-            const command = input.value.trim();
-            const terminal = document.getElementById('apkTerminal');
-            
-            if (!command) return;
-            
-            terminal.innerHTML += `\n$ ${command}`;
-            
-            const cmd = command.toLowerCase();
-            
-            if (cmd.includes('jadx') && cmd.includes('-d')) {
-                terminal.innerHTML += `
+    // ============================================
+    // CHALLENGE FUNCTIONS - MOBILE SECURITY
+    // ============================================
+
+    // APK Command Executor
+    function executeAPKCommand() {
+        const input = document.getElementById('apkCommand');
+        const command = input.value.trim();
+        const terminal = document.getElementById('apkTerminal');
+
+        if (!command) return;
+
+        terminal.innerHTML += `\n$ ${command}`;
+
+        const cmd = command.toLowerCase();
+
+        if (cmd.includes('jadx') && cmd.includes('-d')) {
+            terminal.innerHTML += `
         INFO  - loading...
         INFO  - processing classes.dex
         INFO  - decompiling...
@@ -4157,9 +4178,9 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
 
         Output directory: output/
         Check: output/sources/com/secureapp/banking/`;
-            }
-            else if (cmd.includes('apktool d')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('apktool d')) {
+            terminal.innerHTML += `
         I: Using Apktool 2.7.0
         I: Loading resource table...
         I: Decoding AndroidManifest.xml
@@ -4171,16 +4192,16 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         I: Copying original files...
 
         Decompiled to: com.secureapp.banking/`;
-            }
-            else if (cmd.includes('grep') && cmd.includes('api_key')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('grep') && cmd.includes('api_key')) {
+            terminal.innerHTML += `
         output/sources/com/secureapp/banking/Constants.java:    public static final String API_KEY = "c2VjWHBsb3Jle2gwcmRjMGQzZF9hcGlfa2V5X2YwdW5kfQ==";
         output/sources/com/secureapp/banking/Config.java:    private static final String API_ENDPOINT = "https://api.example.com";
 
         Hardcoded API key found!`;
-            }
-            else if (cmd.includes('cat') && cmd.includes('constants.java')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('cat') && cmd.includes('constants.java')) {
+            terminal.innerHTML += `
         package com.secureapp.banking;
 
         public class Constants {
@@ -4190,27 +4211,27 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         }
 
         Base64 encoded key found!`;
-            }
-            else if (cmd.includes('echo') && cmd.includes('base64 -d')) {
-                if (cmd.includes('c2VjWHBsb3Jle2gwcmRjMGQzZF9hcGlfa2V5X2YwdW5kfQ==')) {
-                    terminal.innerHTML += `
-        secXplore{h0rdc0d3d_api_k3y_f0und}`;
-                } else {
-                    terminal.innerHTML += `
-        Usage: echo "base64string" | base64 -d`;
-                }
-            }
-            else if (cmd === 'help') {
+        }
+        else if (cmd.includes('echo') && cmd.includes('base64 -d')) {
+            if (cmd.includes('c2VjWHBsb3Jle2gwcmRjMGQzZF9hcGlfa2V5X2YwdW5kfQ==')) {
                 terminal.innerHTML += `
+        secXplore{h0rdc0d3d_api_k3y_f0und}`;
+            } else {
+                terminal.innerHTML += `
+        Usage: echo "base64string" | base64 -d`;
+            }
+        }
+        else if (cmd === 'help') {
+            terminal.innerHTML += `
         Available commands:
         - jadx -d output com.secureapp.banking.apk
         - apktool d com.secureapp.banking.apk
         - grep -r "API_KEY" output/
         - cat output/sources/.../Constants.java
         - echo "base64" | base64 -d`;
-            }
-            else if (cmd === 'clear') {
-                terminal.innerHTML = `$ file com.secureapp.banking.apk
+        }
+        else if (cmd === 'clear') {
+            terminal.innerHTML = `$ file com.secureapp.banking.apk
         com.secureapp.banking.apk: Zip archive data, Android application package
 
         Available commands:
@@ -4219,43 +4240,43 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         - grep -r "API_KEY" output/ (search for API keys)
         - cat output/res/values/strings.xml (view strings)
         - find output/ -name "*.java" -exec grep -l "secret" {} \; (find files with secrets)`;
-                input.value = '';
-                return;
-            }
-            else {
-                terminal.innerHTML += `
+            input.value = '';
+            return;
+        }
+        else {
+            terminal.innerHTML += `
         bash: ${command}: command not found
         Type 'help' for available commands`;
-            }
-            
-            input.value = '';
-            const terminalContainer = terminal.closest('.terminal');
-            terminalContainer.scrollTop = terminalContainer.scrollHeight;
-            input.focus();
         }
 
-        // Root Bypass Command Executor
-        function executeRootCommand() {
-            const input = document.getElementById('rootCommand');
-            const command = input.value.trim();
-            const terminal = document.getElementById('rootTerminal');
-            
-            if (!command) return;
-            
-            terminal.innerHTML += `\n$ ${command}`;
-            
-            const cmd = command.toLowerCase();
-            
-            if (cmd.includes('grep') && cmd.includes('isrooted')) {
-                terminal.innerHTML += `
+        input.value = '';
+        const terminalContainer = terminal.closest('.terminal');
+        terminalContainer.scrollTop = terminalContainer.scrollHeight;
+        input.focus();
+    }
+
+    // Root Bypass Command Executor
+    function executeRootCommand() {
+        const input = document.getElementById('rootCommand');
+        const command = input.value.trim();
+        const terminal = document.getElementById('rootTerminal');
+
+        if (!command) return;
+
+        terminal.innerHTML += `\n$ ${command}`;
+
+        const cmd = command.toLowerCase();
+
+        if (cmd.includes('grep') && cmd.includes('isrooted')) {
+            terminal.innerHTML += `
         output/sources/com/secureapp/MainActivity.java:    private boolean isRooted() {
         output/sources/com/secureapp/MainActivity.java:        if (checkSuBinary()) return true;
         output/sources/com/secureapp/MainActivity.java:        if (checkTestKeys()) return true;
 
         Root detection found in MainActivity.java`;
-            }
-            else if (cmd.includes('cat') && cmd.includes('mainactivity.java')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('cat') && cmd.includes('mainactivity.java')) {
+            terminal.innerHTML += `
         private boolean isRooted() {
             // Check for su binary
             if (new File("/system/bin/su").exists()) return true;
@@ -4269,9 +4290,9 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         }
 
         Multiple root checks found!`;
-            }
-            else if (cmd.includes('frida') && cmd.includes('bypass')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('frida') && cmd.includes('bypass')) {
+            terminal.innerHTML += `
             ____
             / _  |   Frida 16.0.19
         | (_| |
@@ -4285,17 +4306,17 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         [+] Admin Panel unlocked!
 
         Flag revealed: secXplore{r00t_d3t3ct_byp4ss3d}`;
-            }
-            else if (cmd === 'help') {
-                terminal.innerHTML += `
+        }
+        else if (cmd === 'help') {
+            terminal.innerHTML += `
         Available commands:
         - grep -r "isRooted" output/
         - cat output/sources/.../MainActivity.java
         - frida -U -f com.secureapp -l bypass.js
         - apktool d com.secureapp.apk`;
-            }
-            else if (cmd === 'clear') {
-                terminal.innerHTML = `$ jadx -d output com.secureapp.apk
+        }
+        else if (cmd === 'clear') {
+            terminal.innerHTML = `$ jadx -d output com.secureapp.apk
         Decompiling...
 
         Available commands:
@@ -4304,34 +4325,34 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         - apktool d com.secureapp.apk (decompile to smali)
         - frida -U -f com.secureapp -l bypass.js (hook with Frida)
         - adb shell "su -c 'which su'" (check for su binary)`;
-                input.value = '';
-                return;
-            }
-            else {
-                terminal.innerHTML += `
-        bash: ${command}: command not found`;
-            }
-            
             input.value = '';
-            const terminalContainer = terminal.closest('.terminal');
-            terminalContainer.scrollTop = terminalContainer.scrollHeight;
-            input.focus();
+            return;
+        }
+        else {
+            terminal.innerHTML += `
+        bash: ${command}: command not found`;
         }
 
-        // SSL Pinning Command Executor
-        function executeSSLPinCommand() {
-            const input = document.getElementById('sslPinCommand');
-            const command = input.value.trim();
-            const terminal = document.getElementById('sslPinTerminal');
-            
-            if (!command) return;
-            
-            terminal.innerHTML += `\n$ ${command}`;
-            
-            const cmd = command.toLowerCase();
-            
-            if (cmd.includes('cat') && cmd.includes('networkmodule')) {
-                terminal.innerHTML += `
+        input.value = '';
+        const terminalContainer = terminal.closest('.terminal');
+        terminalContainer.scrollTop = terminalContainer.scrollHeight;
+        input.focus();
+    }
+
+    // SSL Pinning Command Executor
+    function executeSSLPinCommand() {
+        const input = document.getElementById('sslPinCommand');
+        const command = input.value.trim();
+        const terminal = document.getElementById('sslPinTerminal');
+
+        if (!command) return;
+
+        terminal.innerHTML += `\n$ ${command}`;
+
+        const cmd = command.toLowerCase();
+
+        if (cmd.includes('cat') && cmd.includes('networkmodule')) {
+            terminal.innerHTML += `
         public class NetworkModule {
             private static OkHttpClient getClient() {
                 CertificatePinner certificatePinner = new CertificatePinner.Builder()
@@ -4345,9 +4366,9 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         }
 
         OkHttp3 certificate pinning detected!`;
-            }
-            else if (cmd.includes('frida') && cmd.includes('ssl-bypass')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('frida') && cmd.includes('ssl-bypass')) {
+            terminal.innerHTML += `
         [+] Spawning app...
         [+] Hooking CertificatePinner.check()...
         [+] SSL pinning bypassed!
@@ -4355,9 +4376,9 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         [+] Ready to intercept HTTPS traffic
 
         Setup Burp proxy now`;
-            }
-            else if (cmd.includes('objection')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('objection')) {
+            terminal.innerHTML += `
             _   _         _   _
         ___| |_|_|___ ___| |_|_|___ ___
         | . | . | | -_|  _|  _| | . |   |
@@ -4367,24 +4388,24 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         [+] Certificate validation bypassed
 
         Run: android sslpinning disable`;
-            }
-            else if (cmd.includes('adb') && cmd.includes('proxy')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('adb') && cmd.includes('proxy')) {
+            terminal.innerHTML += `
         Proxy set to 127.0.0.1:8080
         Start Burp Suite to intercept traffic
 
         POST /v1/auth will contain flag in device_id field`;
-            }
-            else if (cmd === 'help') {
-                terminal.innerHTML += `
+        }
+        else if (cmd === 'help') {
+            terminal.innerHTML += `
         Available commands:
         - cat output/sources/.../NetworkModule.java
         - frida -U -f com.app -l ssl-bypass.js
         - objection -g com.app explore
         - adb shell settings put global http_proxy 127.0.0.1:8080`;
-            }
-            else if (cmd === 'clear') {
-                terminal.innerHTML = `$ grep -r "CertificatePinner" output/
+        }
+        else if (cmd === 'clear') {
+            terminal.innerHTML = `$ grep -r "CertificatePinner" output/
         Found SSL pinning implementation in NetworkModule.java
 
         Available commands:
@@ -4392,45 +4413,45 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         - frida -U -f com.app -l ssl-bypass.js (bypass SSL pinning)
         - objection -g com.app explore (interactive bypass)
         - adb shell "settings put global http_proxy 192.168.1.100:8080" (set proxy)`;
-                input.value = '';
-                return;
-            }
-            else {
-                terminal.innerHTML += `
-        bash: ${command}: command not found`;
-            }
-            
             input.value = '';
-            const terminalContainer = terminal.closest('.terminal');
-            terminalContainer.scrollTop = terminalContainer.scrollHeight;
-            input.focus();
+            return;
+        }
+        else {
+            terminal.innerHTML += `
+        bash: ${command}: command not found`;
         }
 
-        // Native Library Command Executor
-        function executeNativeCommand() {
-            const input = document.getElementById('nativeCommand');
-            const command = input.value.trim();
-            const terminal = document.getElementById('nativeTerminal');
-            
-            if (!command) return;
-            
-            terminal.innerHTML += `\n$ ${command}`;
-            
-            const cmd = command.toLowerCase();
-            
-            if (cmd.includes('unzip') && cmd.includes('lib')) {
-                terminal.innerHTML += `
+        input.value = '';
+        const terminalContainer = terminal.closest('.terminal');
+        terminalContainer.scrollTop = terminalContainer.scrollHeight;
+        input.focus();
+    }
+
+    // Native Library Command Executor
+    function executeNativeCommand() {
+        const input = document.getElementById('nativeCommand');
+        const command = input.value.trim();
+        const terminal = document.getElementById('nativeTerminal');
+
+        if (!command) return;
+
+        terminal.innerHTML += `\n$ ${command}`;
+
+        const cmd = command.toLowerCase();
+
+        if (cmd.includes('unzip') && cmd.includes('lib')) {
+            terminal.innerHTML += `
         Archive:  com.app.apk
         inflating: lib/armeabi-v7a/libnative-lib.so
 
         Extracted successfully`;
-            }
-            else if (cmd.includes('file') && cmd.includes('libnative')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('file') && cmd.includes('libnative')) {
+            terminal.innerHTML += `
         libnative-lib.so: ELF 32-bit LSB shared object, ARM, version 1 (SYSV), dynamically linked`;
-            }
-            else if (cmd.includes('objdump -d')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('objdump -d')) {
+            terminal.innerHTML += `
         00001234 <Java_com_app_Native_encrypt>:
             1234:   push    {r4, r5, r6, lr}
             1238:   mov     r4, r0
@@ -4443,9 +4464,9 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
             1254:   b       123c
 
         Encryption: XOR 0x42, then ADD 0x10`;
-            }
-            else if (cmd.includes('strings') && cmd.includes('flag')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('strings') && cmd.includes('flag')) {
+            terminal.innerHTML += `
         JNI_OnLoad
         Java_com_app_Native_encrypt
         Encrypted: 93A7C3BFA3B793CBA3B793CFB3AF93BF93CFB3CF93B793C7
@@ -4453,25 +4474,25 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         libc.so
 
         Encrypted flag found in strings!`;
-            }
-            else if (cmd.includes('readelf -s')) {
-                terminal.innerHTML += `
+        }
+        else if (cmd.includes('readelf -s')) {
+            terminal.innerHTML += `
         Symbol table '.dynsym':
         Num:    Value  Size Type    Bind   Vis      Ndx Name
             45: 00001234   124 FUNC    GLOBAL DEFAULT   11 Java_com_app_Native_encrypt
             46: 00001358    64 FUNC    GLOBAL DEFAULT   11 Java_com_app_Native_decrypt`;
-            }
-            else if (cmd === 'help') {
-                terminal.innerHTML += `
+        }
+        else if (cmd === 'help') {
+            terminal.innerHTML += `
         Available commands:
         - unzip com.app.apk lib/armeabi-v7a/libnative-lib.so
         - file libnative-lib.so
         - objdump -d libnative-lib.so
         - strings libnative-lib.so | grep -i "flag"
         - readelf -s libnative-lib.so`;
-            }
-            else if (cmd === 'clear') {
-                terminal.innerHTML = `$ unzip -l com.app.apk | grep ".so"
+        }
+        else if (cmd === 'clear') {
+            terminal.innerHTML = `$ unzip -l com.app.apk | grep ".so"
         1234567  lib/armeabi-v7a/libnative-lib.so
         2345678  lib/arm64-v8a/libnative-lib.so
 
@@ -4481,23 +4502,23 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         - objdump -d libnative-lib.so (disassemble)
         - strings libnative-lib.so | grep -i "flag" (search strings)
         - readelf -s libnative-lib.so (view symbols)`;
-                input.value = '';
-                return;
-            }
-            else {
-                terminal.innerHTML += `
-        bash: ${command}: command not found`;
-            }
-            
             input.value = '';
-            const terminalContainer = terminal.closest('.terminal');
-            terminalContainer.scrollTop = terminalContainer.scrollHeight;
-            input.focus();
+            return;
+        }
+        else {
+            terminal.innerHTML += `
+        bash: ${command}: command not found`;
         }
 
-        // Root Detection Functions
-        function analyzeRootChecks() {
-            document.getElementById('rootOutput').innerHTML = `Analyzing root detection methods...
+        input.value = '';
+        const terminalContainer = terminal.closest('.terminal');
+        terminalContainer.scrollTop = terminalContainer.scrollHeight;
+        input.focus();
+    }
+
+    // Root Detection Functions
+    function analyzeRootChecks() {
+        document.getElementById('rootOutput').innerHTML = `Analyzing root detection methods...
 
         Found 4 detection methods:
         1. ✓ Check for su binary in /system/bin and /system/xbin
@@ -4506,10 +4527,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         4. ✓ Check write permission to /system
 
         All checks must return false to bypass.`;
-        }
+    }
 
-        function patchAPK() {
-            document.getElementById('rootOutput').innerHTML = `Patching APK...
+    function patchAPK() {
+        document.getElementById('rootOutput').innerHTML = `Patching APK...
 
         1. Decompiling with apktool
         2. Modifying isRooted() method in smali
@@ -4519,10 +4540,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
 
         ✓ Patched APK created!
         ✓ Install and run to access hidden features`;
-        }
+    }
 
-        function hookFunction() {
-            document.getElementById('rootOutput').innerHTML = `Frida Hook Script:
+    function hookFunction() {
+        document.getElementById('rootOutput').innerHTML = `Frida Hook Script:
         ==================
 
         Java.perform(function() {
@@ -4535,10 +4556,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         });
 
         <span style="color: var(--success);">✓ Hook injected! Root checks bypassed.</span>`;
-        }
+    }
 
-        function testBypass() {
-            document.getElementById('rootOutput').innerHTML = `Testing bypass...
+    function testBypass() {
+        document.getElementById('rootOutput').innerHTML = `Testing bypass...
 
         Launching app with Frida hook...
         [+] isRooted() called - returning false
@@ -4549,11 +4570,11 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         Flag: secXplore{r00t_d3t3ct_byp4ss3d}
 
         <span style="color: var(--success);">✓ Bypass successful!</span>`;
-        }
+    }
 
-        // SSL Pinning Functions
-        function analyzePinning() {
-            document.getElementById('sslPinOutput').innerHTML = `Analyzing SSL pinning implementation...
+    // SSL Pinning Functions
+    function analyzePinning() {
+        document.getElementById('sslPinOutput').innerHTML = `Analyzing SSL pinning implementation...
 
         Certificate Pinning Type: OkHttp3 CertificatePinner
         Pinned Certificate SHA256:
@@ -4564,10 +4585,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         - Method: providesOkHttpClient()
 
         <span style="color: var(--warning);">Certificate pinning detected!</span>`;
-        }
+    }
 
-        function injectFrida() {
-            document.getElementById('sslPinOutput').innerHTML = `Injecting Frida bypass script...
+    function injectFrida() {
+        document.getElementById('sslPinOutput').innerHTML = `Injecting Frida bypass script...
 
         $ frida -U -f com.example.app -l ssl-bypass.js
 
@@ -4577,10 +4598,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         [+] All certificates now accepted
 
         <span style="color: var(--success);">✓ Frida script injected successfully!</span>`;
-        }
+    }
 
-        function interceptHTTPS() {
-            document.getElementById('sslPinOutput').innerHTML = `Intercepting HTTPS traffic with Burp Suite...
+    function interceptHTTPS() {
+        document.getElementById('sslPinOutput').innerHTML = `Intercepting HTTPS traffic with Burp Suite...
 
         Configuring proxy: 127.0.0.1:8080
         Installing Burp CA certificate...
@@ -4590,10 +4611,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         ✓ Capturing requests...
 
         <span style="color: var(--success);">Ready to analyze traffic</span>`;
-        }
+    }
 
-        function extractAPIData() {
-            document.getElementById('sslPinOutput').innerHTML = `Extracting data from API requests...
+    function extractAPIData() {
+        document.getElementById('sslPinOutput').innerHTML = `Extracting data from API requests...
 
         POST https://api.secureapp.com/v1/auth
         Content-Type: application/json
@@ -4605,11 +4626,11 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         }
 
         <span style="color: var(--success);">✓ Flag found in device_id field!</span>`;
-        }
+    }
 
-        // Native Library Functions
-        function disassembleNative() {
-            document.getElementById('nativeOutput').innerHTML = `Disassembling native library...
+    // Native Library Functions
+    function disassembleNative() {
+        document.getElementById('nativeOutput').innerHTML = `Disassembling native library...
 
         $ arm-linux-gnueabi-objdump -d libnative-lib.so
 
@@ -4619,10 +4640,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         - Loop through each byte
 
         <span style="color: var(--success);">✓ Encryption algorithm identified!</span>`;
-        }
+    }
 
-        function analyzeEncryption() {
-            document.getElementById('nativeOutput').innerHTML = `Analyzing encryption algorithm...
+    function analyzeEncryption() {
+        document.getElementById('nativeOutput').innerHTML = `Analyzing encryption algorithm...
 
         Assembly Code Analysis:
         1. eor r5, r5, #0x42    ; XOR with 0x42
@@ -4632,10 +4653,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         Decryption: byte = (encrypted - 0x10) ^ 0x42
 
         <span style="color: var(--success);">✓ Algorithm reversed!</span>`;
-        }
+    }
 
-        function reverseAlgorithmNative() {
-            document.getElementById('nativeOutput').innerHTML = `Reversing encryption algorithm...
+    function reverseAlgorithmNative() {
+        document.getElementById('nativeOutput').innerHTML = `Reversing encryption algorithm...
 
         To decrypt:
         1. Subtract 0x10 from each byte
@@ -4647,10 +4668,10 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
             for byte in data:
                 result += chr(((byte - 0x10) ^ 0x42))
             return result`;
-        }
+    }
 
-        function decryptFlag() {
-            document.getElementById('nativeOutput').innerHTML = `Decrypting flag...
+    function decryptFlag() {
+        document.getElementById('nativeOutput').innerHTML = `Decrypting flag...
 
         Encrypted (hex): 93A7C3BFA3B793CBA3B793CFB3AF93BF93CFB3CF93B793C7
 
@@ -4662,12 +4683,12 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
         Result: secXplore{n4t1v3_l1b_r3v3rs3d}
 
         <span style="color: var(--success);">✓ Flag decrypted successfully!</span>`;
-        }
-        function confirmBackToCategory() {
-    // สร้าง custom confirm dialog
-            const confirmDialog = document.createElement('div');
-            confirmDialog.className = 'confirm-overlay';
-            confirmDialog.innerHTML = `
+    }
+    function confirmBackToCategory() {
+        // สร้าง custom confirm dialog
+        const confirmDialog = document.createElement('div');
+        confirmDialog.className = 'confirm-overlay';
+        confirmDialog.innerHTML = `
                 <div class="confirm-dialog">
                     <h3>⚠️ ออกจากโจทย์?</h3>
                     <p>คุณต้องการออกจากโจทย์นี้หรือไม่?</p>
@@ -4684,42 +4705,42 @@ Decoded Payload: {"user":"user","role":"user","iat":1633024800}
                     </div>
                 </div>
             `;
-            document.body.appendChild(confirmDialog);
-            
-            // Animate in
-            setTimeout(() => confirmDialog.classList.add('show'), 10);
+        document.body.appendChild(confirmDialog);
+
+        // Animate in
+        setTimeout(() => confirmDialog.classList.add('show'), 10);
+    }
+
+    function closeConfirmDialog() {
+        const dialog = document.querySelector('.confirm-overlay');
+        if (dialog) {
+            dialog.classList.remove('show');
+            setTimeout(() => dialog.remove(), 300);
         }
+    }
 
-        function closeConfirmDialog() {
-            const dialog = document.querySelector('.confirm-overlay');
-            if (dialog) {
-                dialog.classList.remove('show');
-                setTimeout(() => dialog.remove(), 300);
-            }
-        }
+    function confirmExit() {
+        closeConfirmDialog();
+        closeInteractiveModal();
+    }
+    function closeInteractiveModal() {
+        document.getElementById('interactiveModal').classList.remove('active');
+    }
 
-        function confirmExit() {
-            closeConfirmDialog();
-            closeInteractiveModal();
-        }
-        function closeInteractiveModal() {
-            document.getElementById('interactiveModal').classList.remove('active');
-        }
+    document.addEventListener('DOMContentLoaded', function () {
+        createParticles();
 
-        document.addEventListener('DOMContentLoaded', function() {
-            createParticles();
-            
-            // Removed backdrop click to prevent accidental closing
-            // Only allow closing via close button (X)
+        // Removed backdrop click to prevent accidental closing
+        // Only allow closing via close button (X)
 
-            // Removed ESC key closing to prevent accidental closing
-        });
+        // Removed ESC key closing to prevent accidental closing
+    });
 
-// ============================================
-// RSA CRYPTANALYSIS FUNCTIONS
-// ============================================
-function analyzeRSA() {
-    document.getElementById('rsaOutput').innerHTML = `RSA Public Key Analysis:
+    // ============================================
+    // RSA CRYPTANALYSIS FUNCTIONS
+    // ============================================
+    function analyzeRSA() {
+        document.getElementById('rsaOutput').innerHTML = `RSA Public Key Analysis:
 ==========================
 
 Public Key Parameters:
@@ -4736,10 +4757,10 @@ Security Analysis:
 <span style="color: var(--warning);">⚠️ This RSA implementation is WEAK!</span>
 
 Next step: Factor n to find prime factors p and q`;
-}
+    }
 
-function factorRSA() {
-    document.getElementById('rsaOutput').innerHTML = `Factoring n = 8051:
+    function factorRSA() {
+        document.getElementById('rsaOutput').innerHTML = `Factoring n = 8051:
 ====================
 
 Method: Trial division
@@ -4763,10 +4784,10 @@ n = p × q = 8,051 ✓
 Verification: 83 × 97 = 8,051 ✓
 
 <span style="color: var(--success);">Now we can calculate the private key (d)!</span>`;
-}
+    }
 
-function calculatePrivateKey() {
-    document.getElementById('rsaOutput').innerHTML = `Calculating Private Key:
+    function calculatePrivateKey() {
+        document.getElementById('rsaOutput').innerHTML = `Calculating Private Key:
 =========================
 
 Known values:
@@ -4797,10 +4818,10 @@ d = 5,248
 <span style="color: var(--success); font-size: 1.1em;">Private Key: d = 5,248</span>
 
 Ready to decrypt the message!`;
-}
+    }
 
-function decryptRSA() {
-    document.getElementById('rsaOutput').innerHTML = `Decrypting RSA Message:
+    function decryptRSA() {
+        document.getElementById('rsaOutput').innerHTML = `Decrypting RSA Message:
 ========================
 
 Ciphertext blocks:
@@ -4833,13 +4854,13 @@ Decrypted Message: secXplore{rs4_w34k_k3y_br0k3n}
 </span>
 
 <span style="color: var(--success);">✓ RSA decryption successful! This is your flag.</span>`;
-}
+    }
 
-// ============================================
-// CUSTOM CIPHER FUNCTIONS (IMPROVED)
-// ============================================
-function analyzeCustomCipher() {
-    document.getElementById('customOutput').innerHTML = `Analyzing Custom Cipher:
+    // ============================================
+    // CUSTOM CIPHER FUNCTIONS (IMPROVED)
+    // ============================================
+    function analyzeCustomCipher() {
+        document.getElementById('customOutput').innerHTML = `Analyzing Custom Cipher:
 =========================
 
 Encrypted: QnBwWmtwcGVkZntkaDRfaDRlX2UzYWN2YTNfcGYza2V9
@@ -4860,10 +4881,10 @@ Encrypted: QnBwWmtwcGVkZntkaDRfaDRlX2UzYWN2YTNfcGYza2V9
 <span style="color: var(--secondary);">But the result may not be plaintext...</span>
 
 <strong>Next Step:</strong> Try Base64 decoding first`;
-}
+    }
 
-function decodeCustomBase64() {
-    document.getElementById('customOutput').innerHTML = `Base64 Decoding:
+    function decodeCustomBase64() {
+        document.getElementById('customOutput').innerHTML = `Base64 Decoding:
 =================
 
 Input: QnBwWmtwcGVkZntkaDRfaDRlX2UzYWN2YTNfcGYza2V9
@@ -4898,10 +4919,10 @@ c → p (+13 or -13)
 <span style="color: var(--primary);">💡 Pattern: Alternating Caesar shifts!</span>
 
 Next: Apply reverse alternating shifts`;
-}
+    }
 
-function applyROT13Custom() {
-    document.getElementById('customOutput').innerHTML = `Applying ROT13:
+    function applyROT13Custom() {
+        document.getElementById('customOutput').innerHTML = `Applying ROT13:
 ================
 
 Input: BppZkppedf{dh4_h4e_e3acva3_pf3ke}
@@ -4932,10 +4953,10 @@ Result: <span style="color: var(--secondary);">OccMxccrqs{qu4_u4r_r3npin3_cs3xr}
 <span style="color: var(--danger);">✗ Still not readable! ROT13 alone doesn't work.</span>
 
 <span style="color: var(--warning);">The cipher uses alternating shifts, not uniform ROT13!</span>`;
-}
+    }
 
-function bruteForceRotation() {
-    document.getElementById('customOutput').innerHTML = `Brute Force All Caesar Rotations:
+    function bruteForceRotation() {
+        document.getElementById('customOutput').innerHTML = `Brute Force All Caesar Rotations:
 ===================================
 
 Testing ROT1 through ROT25 on: BppZkppedf{dh4_h4e_e3acva3_pf3ke}
@@ -4963,10 +4984,10 @@ ROT25: YmmWhmmbbbc{gc4_g4d_d3bbru3_oe3jd}
 <strong>Solution:</strong> Apply different shifts to alternating positions:
 - Position 0, 2, 4, 6... : shift -13
 - Position 1, 3, 5, 7... : shift -11`;
-}
+    }
 
-function decodeCustomAll() {
-    document.getElementById('customOutput').innerHTML = `Complete Decryption Process:
+    function decodeCustomAll() {
+        document.getElementById('customOutput').innerHTML = `Complete Decryption Process:
 =============================
 
 <strong>Layer 1: Base64 Decode</strong>
@@ -5030,54 +5051,57 @@ Position 32: } = }
 ✓ Multi-layer cipher successfully cracked!
 ✓ Layers: Base64 → Alternating Caesar(-13/-11)
 </span>`;
-}
-// === Expose functions for HTML onclick ===
-// ให้เรียกได้จาก onclick="..." ใน challenge.html และ interactive templates
+    }
 
-// ปุ่มเลือกหมวด / เปิด–ปิด modal หลัก
-window.openChallengeList = openChallengeList;
-window.openInteractiveChallenge = openInteractiveChallenge;
-window.closeModal = closeModal;
-window.confirmBackToCategory = confirmBackToCategory;
+    // === Expose functions for HTML onclick ===
+    // ให้เรียกได้จาก onclick="..." ใน challenge.html และ interactive templates
 
-// ระบบ Hint + login bypass (SQL Injection)
-window.toggleHint = toggleHint;
-window.attemptSQLLogin = attemptSQLLogin;
-window.checkFlag = checkFlag;
+    // ปุ่มเลือกหมวด / เปิด–ปิด modal หลัก
+    window.openChallengeList = openChallengeList;
+    window.openInteractiveChallenge = openInteractiveChallenge;
+    window.closeModal = closeModal;
+    window.confirmBackToCategory = confirmBackToCategory;
 
-// Command Injection lab
-window.executeCMD = executeCMD;
+    // ระบบ Hint + login bypass (SQL Injection)
+    window.toggleHint = toggleHint;
+    window.attemptSQLLogin = attemptSQLLogin;
+    window.checkFlag = checkFlag;
 
-// XSS lab
-window.submitXSS = submitXSS;
+    // Command Injection lab
+    window.executeCMD = executeCMD;
 
-// Crypto tools / XOR / RSA ฯลฯ
-window.applyOperation = applyOperation;
-window.calculateXor = calculateXor;
-window.calculateRsaPrivateKey = calculateRsaPrivateKey;
-window.decryptRsaMessage = decryptRsaMessage;
-window.decryptWithXorKey = decryptWithXorKey;
-window.showPublicKey = showPublicKey;
-window.testPrimeFactor = testPrimeFactor;
+    // XSS lab
+    window.submitXSS = submitXSS;
 
-// Clipboard / UI helper
-window.copyToClipboard = copyToClipboard;
+    // Crypto tools / XOR / RSA ฯลฯ
+    window.applyOperation = applyOperation;
+    window.calculateXor = calculateXor;
+    window.calculateRsaPrivateKey = calculateRsaPrivateKey;
+    window.decryptRsaMessage = decryptRsaMessage;
+    window.decryptWithXorKey = decryptWithXorKey;
+    window.showPublicKey = showPublicKey;
+    window.testPrimeFactor = testPrimeFactor;
 
-// Dialog ยืนยัน / multi-step challenge
-window.closeHintConfirmDialog = closeHintConfirmDialog;
-window.confirmHint = confirmHint;
-window.closeConfirmDialog = closeConfirmDialog;
-window.confirmExit = confirmExit;
+    // Clipboard / UI helper
+    window.copyToClipboard = copyToClipboard;
 
-window.processMultiStep1 = processMultiStep1;
-window.processMultiStep2 = processMultiStep2;
-window.processMultiStep3 = processMultiStep3;
-window.processMultiStep4 = processMultiStep4;
+    // Dialog ยืนยัน / multi-step challenge
+    window.closeHintConfirmDialog = closeHintConfirmDialog;
+    window.confirmHint = confirmHint;
+    window.closeConfirmDialog = closeConfirmDialog;
+    window.confirmExit = confirmExit;
 
-// JWT lab
-window.createHS256 = createHS256;
-window.decodeJWT = decodeJWT;
-window.verifyJWT = verifyJWT;
+    window.processMultiStep1 = processMultiStep1;
+    window.processMultiStep2 = processMultiStep2;
+    window.processMultiStep3 = processMultiStep3;
+    window.processMultiStep4 = processMultiStep4;
 
+    // JWT lab
+    window.createHS256 = createHS256;
+    window.decodeJWT = decodeJWT;
+    window.verifyJWT = verifyJWT;
 
 });
+
+
+
