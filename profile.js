@@ -673,6 +673,24 @@ function logout() {
         window.location.href = 'login.html';
     }
 }
+// Expose functions for inline onclick handlers in profile.html
+window.cancelEdit = cancelEdit;
+window.closeDeleteAccountModal = closeDeleteAccountModal;
+window.closePasswordModal = closePasswordModal;
+window.confirmDeleteAccount = confirmDeleteAccount;
+window.executeDeleteAccount = executeDeleteAccount;
+window.handleAvatarChange = handleAvatarChange;
+window.logout = logout;
+window.openPasswordModal = openPasswordModal;
+window.resendOTP = resendOTP;
+window.resetPassword = resetPassword;
+window.saveAccountChanges = saveAccountChanges;
+window.toggle2FA = toggle2FA;
+window.toggleEditMode = toggleEditMode;
+window.togglePasswordField = togglePasswordField;
+window.verifyCurrentPassword = verifyCurrentPassword;
+window.verifyOTP = verifyOTP;
+
 
 // Add CSS animations
 const style = document.createElement('style');
