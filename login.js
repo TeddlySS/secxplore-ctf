@@ -106,7 +106,7 @@ async function signInWithGoogle() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: 'https://strong-torrone-891034.netlify.app/',
+        redirectTo: 'https://strong-torrone-891034.netlify.app/challenge.html',
       },
     });
 
